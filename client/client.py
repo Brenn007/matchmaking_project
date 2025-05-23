@@ -3,7 +3,8 @@ from tkinter import messagebox
 import socket
 import threading
 
-SERVER_IP = '127.0.0.1'  #a remplacer par l'IP du serveur
+
+SERVER_IP = '10.31.32.143'
 SERVER_PORT = 12345
 
 class MatchmakingClient(tk.Tk):

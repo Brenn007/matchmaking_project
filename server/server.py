@@ -5,7 +5,7 @@ import time
 import signal
 import sys
 
-HOST = '127.0.0.1'
+HOST = '10.31.32.143'
 PORT = 12345
 HTTP_PORT = 8080
 
@@ -33,6 +33,8 @@ def handle_client(conn, addr):
     print(f"[+] Connexion de {addr}")
     try:
         pseudo = conn.recv(1024).decode()
+        print(f"[DEBUG] Message brut reçu : {pseudo}")  # Log détaillé du message reçu
+
         # Vérifier si la requête ressemble à une requête HTTP
         if pseudo.startswith("GET") or pseudo.startswith("POST"):
             print(f"[!] Requête HTTP détectée sur le serveur socket : {pseudo[:50]}...")
@@ -43,19 +45,25 @@ def handle_client(conn, addr):
 
         with lock:
             queue.append((addr[0], addr[1], pseudo, conn))
+            print(f"[DEBUG] File d'attente actuelle : {queue}")  # Log de l'état de la file d'attente
 
         conn.sendall(b"En attente d'un adversaire...\n")
 
         while True:
-            data = conn.recv(1024).decode()
-            if not data:
-                print(f"[!] Déconnexion de {addr}")
+            try:
+                data = conn.recv(1024).decode()
+                print(f"[DEBUG] Données reçues : {data}")  # Log détaillé des données reçues
+                if not data:
+                    print(f"[!] Déconnexion de {addr}")
+                    break
+                handle_move(data)
+            except Exception as e:
+                print(f"[!] Erreur lors du traitement des données de {addr} : {e}")
                 break
-            print(f"[+] Données reçues : {data}")
-            handle_move(data)
     except Exception as e:
         print(f"[!] Erreur avec {addr} : {e}")
     finally:
+        print(f"[DEBUG] Connexion fermée pour {addr}")  # Log de la fermeture de connexion
         conn.close()
 
 def handle_move(data):
@@ -100,6 +108,9 @@ def matchmaking():
     global match_id_counter
     while True:
         with lock:
+            # Nettoyer la file d'attente des connexions fermées
+            queue[:] = [player for player in queue if player[3].fileno() != -1]
+
             if len(queue) >= 2:
                 p1 = queue.pop(0)
                 p2 = queue.pop(0)
