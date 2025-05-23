@@ -1,12 +1,19 @@
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 import socket
 import threading
-import sqlite3
 import time
- 
-HOST = '0.0.0.0'
+import signal
+import sys
+
+HOST = '127.0.0.1'
 PORT = 12345
-DB_FILE = 'matchmaking.db'
- 
+HTTP_PORT = 8080
+
+queue = []
+matches = {}
+match_id_counter = 1
+lock = threading.Lock()
+
 def check_game_end(board):
     lines = [
         board[0:3], board[3:6], board[6:9],  # lignes
@@ -18,39 +25,34 @@ def check_game_end(board):
     elif 'OOO' in lines:
         return True, 2
     elif ' ' not in board:
-        return True, 0  # égalité
+        return True, 0
     return False, None
 
 def handle_client(conn, addr):
+    global queue
     print(f"[+] Connexion de {addr}")
     try:
         pseudo = conn.recv(1024).decode()
+        # Vérifier si la requête ressemble à une requête HTTP
+        if pseudo.startswith("GET") or pseudo.startswith("POST"):
+            print(f"[!] Requête HTTP détectée sur le serveur socket : {pseudo[:50]}...")
+            conn.close()
+            return
+
         print(f"[+] Pseudo reçu : {pseudo}")
- 
-        # Ajouter à la file d'attente
-        with sqlite3.connect(DB_FILE) as db:
-            cursor = db.cursor()
-            cursor.execute(
-                "INSERT INTO queue (ip, port, pseudo) VALUES (?, ?, ?)",
-                (addr[0], addr[1], pseudo)
-            )
-            db.commit()
- 
+
+        with lock:
+            queue.append((addr[0], addr[1], pseudo, conn))
+
         conn.sendall(b"En attente d'un adversaire...\n")
- 
-        # Boucle d'écoute des coups
+
         while True:
-            try:
-                data = conn.recv(1024).decode()
-                if not data:
-                    print(f"[!] Déconnexion de {addr}")
-                    break
-                print(f"[+] Données reçues : {data}")
-                handle_move(data)
-            except ConnectionResetError:
-                print(f"[!] Client {addr} déconnecté brutalement")
+            data = conn.recv(1024).decode()
+            if not data:
+                print(f"[!] Déconnexion de {addr}")
                 break
- 
+            print(f"[+] Données reçues : {data}")
+            handle_move(data)
     except Exception as e:
         print(f"[!] Erreur avec {addr} : {e}")
     finally:
@@ -61,106 +63,93 @@ def handle_move(data):
         match_id, player_number, move = data.strip().split(',')
         i, j = int(move[0]), int(move[1])
         player_number = int(player_number)
- 
-        with sqlite3.connect(DB_FILE) as db:
-            cursor = db.cursor()
- 
-            # Récupérer le plateau actuel
-            cursor.execute("SELECT board, player1_ip, player1_port, player2_ip, player2_port FROM matches WHERE id = ?", (match_id,))
-            result = cursor.fetchone()
-            if not result:
+
+        with lock:
+            match = matches.get(int(match_id))
+            if not match:
                 return
- 
-            board, p1_ip, p1_port, p2_ip, p2_port = result
-            board = list(board)
+
+            board = list(match['board'])
             index = i * 3 + j
- 
-            # Vérifier si la case est déjà prise
+
             if board[index] != ' ':
                 print("[!] Coup invalide : case déjà occupée")
                 return
- 
+
             board[index] = 'X' if player_number == 1 else 'O'
-            new_board = ''.join(board)
- 
-            # Vérifier fin de partie
-            is_over, winner = check_game_end(new_board)
- 
-            # Mettre à jour le plateau et l'état du match
-            cursor.execute("UPDATE matches SET board = ?, is_finished = ?, winner = ? WHERE id = ?",
-                           (new_board, int(is_over), winner, match_id))
- 
-            # Enregistrer le tour
-            cursor.execute("INSERT INTO turns (match_id, player, move) VALUES (?, ?, ?)", (match_id, player_number, move))
-            db.commit()
- 
-        # Relayer le coup à l'autre joueur
-        target_ip = p2_ip if player_number == 1 else p1_ip
-        target_port = p2_port if player_number == 1 else p1_port
- 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((target_ip, target_port))
-            s.sendall(f"Coup joué: {move}".encode())
- 
+            match['board'] = ''.join(board)
+
+            is_over, winner = check_game_end(match['board'])
+            match['is_finished'] = is_over
+            match['winner'] = winner
+
+            target_conn = match['player2_conn'] if player_number == 1 else match['player1_conn']
+            target_conn.sendall(f"Coup joué: {move}".encode())
+
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
- 
-    except Exception as e:
-        print(f"[!] Erreur dans handle_move : {e}")
- 
-def notify_player(player, match_id, player_number):
+
+def notify_player(conn, match_id, player_number):
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((player[1], player[2]))
-            message = f"Match trouvé ! ID: {match_id}, Joueur: {player_number}"
-            s.sendall(message.encode())
+        message = f"Match trouvé ! ID: {match_id}, Joueur: {player_number}"
+        conn.sendall(message.encode())
     except Exception as e:
-        print(f"[!] Impossible de notifier {player[3]} : {e}")
- 
+        print(f"[!] Impossible de notifier un joueur : {e}")
+
 def matchmaking():
+    global match_id_counter
     while True:
-        with sqlite3.connect(DB_FILE) as db:
-            cursor = db.cursor()
-            cursor.execute("SELECT * FROM queue ORDER BY entry_time LIMIT 2")
-            players = cursor.fetchall()
- 
-            if len(players) >= 2:
-                player1 = players[0]
-                player2 = players[1]
- 
-                # Créer un match avec un plateau vide
-                cursor.execute(
-                    "INSERT INTO matches (player1_ip, player1_port, player2_ip, player2_port, board, is_finished, winner) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (player1[1], player1[2], player2[1], player2[2], ' ' * 9, 0, None)
-                )
-                match_id = cursor.lastrowid
- 
-                # Supprimer les joueurs de la file
-                cursor.execute("DELETE FROM queue WHERE id IN (?, ?)", (player1[0], player2[0]))
-                db.commit()
- 
-                print(f"[+] Match créé entre {player1[3]} et {player2[3]} (ID: {match_id})")
- 
-                # Notifier les joueurs
-                notify_player(player1, match_id, 1)
-                notify_player(player2, match_id, 2)
- 
-        time.sleep(5)
+        with lock:
+            if len(queue) >= 2:
+                p1 = queue.pop(0)
+                p2 = queue.pop(0)
+
+                match_id = match_id_counter
+                match_id_counter += 1
+
+                matches[match_id] = {
+                    'player1_conn': p1[3],
+                    'player2_conn': p2[3],
+                    'board': ' ' * 9,
+                    'is_finished': False,
+                    'winner': None
+                }
+
+                print(f"[+] Match créé entre {p1[2]} et {p2[2]} (ID: {match_id})")
+                notify_player(p1[3], match_id, 1)
+                notify_player(p2[3], match_id, 2)
+
+        time.sleep(2)
 
 def start_server():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
     server.listen()
     print(f"[+] Serveur en écoute sur {HOST}:{PORT}")
- 
-    # Lancer le thread de matchmaking
-    matchmaking_thread = threading.Thread(target=matchmaking, daemon=True)
-    matchmaking_thread.start()
- 
+
+    threading.Thread(target=matchmaking, daemon=True).start()
+
     while True:
         conn, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(conn, addr))
-        thread.start()
- 
+        threading.Thread(target=handle_client, args=(conn, addr)).start()
+
+class MyHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"<html><body><h1>Serveur HTTP actif</h1></body></html>")
+
+def signal_handler(sig, frame):
+    print("\n[!] Arrêt du serveur...")
+    sys.exit(0)
+
 if __name__ == "__main__":
-    start_server()
+    signal.signal(signal.SIGINT, signal_handler)  # Capture Ctrl+C
+    threading.Thread(target=start_server, daemon=True).start()
+    with HTTPServer((HOST, HTTP_PORT), MyHandler) as http_server:
+        print(f"Serveur HTTP en écoute sur {HOST}:{HTTP_PORT}")
+        try:
+            http_server.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[!] Serveur HTTP arrêté.")
