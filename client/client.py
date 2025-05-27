@@ -47,8 +47,9 @@ class MatchmakingClient(tk.Tk):
             # Écoute des messages du serveur
             threading.Thread(target=self.listen_to_server, daemon=True).start()
         except Exception as e:
-            messagebox.showerror("Erreur de connexion", f"Impossible de se connecter au serveur : {e}")
-            self.socket = None    def listen_to_server(self):
+            messagebox.showerror("Erreur de connexion", f"Impossible de se connecter au serveur : {e}")            self.socket = None
+            
+    def listen_to_server(self):
         try:
             buffer = ""
             while True:
