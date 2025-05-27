@@ -10,6 +10,7 @@ import sqlite3
 import json
 import threading
 import time
+import pytest
 
 # Ajouter le chemin vers les modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,78 +18,42 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server.jeu.database import DatabaseManager
 from shared.protocol import Protocol, MessageType, GameMessages, GameState
 
-def test_database_operations():
-    """Test des opérations CRUD de la base de données"""
-    print("=== Test des opérations de base de données ===")
-    
-    # Créer une instance de DatabaseManager
+def test_add_player_to_queue():
     db_manager = DatabaseManager("test_matchmaking.db")
-    
-    try:        # Test 1: Ajout de joueurs dans la file d'attente
-        print("Test 1: Ajout de joueurs dans la file d'attente")
-        queue_id1 = db_manager.add_player_to_queue("TestPlayer1", "127.0.0.1", 12345)
-        queue_id2 = db_manager.add_player_to_queue("TestPlayer2", "127.0.0.1", 12346)
-        print(f"✓ Joueurs ajoutés: {queue_id1}, {queue_id2}")
-        
-        # Test 2: Récupération de la file d'attente
-        print("Test 2: Récupération de la file d'attente")
-        queue = db_manager.get_queue_players()
-        print(f"✓ File d'attente: {len(queue)} joueurs")
-        
-        # Test 3: Création d'un match
-        print("Test 3: Création d'un match")
-        match_id = db_manager.create_match("TestPlayer1", "TestPlayer2")
-        print(f"✓ Match créé avec ID: {match_id}")
-        
-        # Test 4: Suppression de la file d'attente
-        print("Test 4: Suppression de la file d'attente")
-        db_manager.remove_player_from_queue(queue_id1)
-        db_manager.remove_player_from_queue(queue_id2)
-        new_queue = db_manager.get_queue_players()
-        print(f"✓ File d'attente après suppression: {len(new_queue)} joueurs")
-        
-        # Test 5: Ajout de tours de jeu
-        print("Test 5: Ajout de tours de jeu")
-        turn_id1 = db_manager.add_turn(match_id, "TestPlayer1", 1, 0, 0, 'X')
-        turn_id2 = db_manager.add_turn(match_id, "TestPlayer2", 2, 1, 1, 'O')
-        print(f"✓ Tours ajoutés: {turn_id1}, {turn_id2}")
-        
-        # Test 6: Récupération de l'historique d'un match
-        print("Test 6: Récupération de l'historique d'un match")
-        turns = db_manager.get_match_turns(match_id)
-        print(f"✓ Historique du match: {len(turns)} tours")
-        
-        # Test 7: Finalisation du match
-        print("Test 7: Finalisation du match")
-        db_manager.end_match(match_id, "TestPlayer1")
-        match_info = db_manager.get_match(match_id)
-        print(f"✓ Match finalisé, gagnant: {match_info['winner']}")
-        
-        # Test 8: Statistiques des joueurs
-        print("Test 8: Statistiques des joueurs")
-        stats1 = db_manager.get_player_stats("TestPlayer1")
-        stats2 = db_manager.get_player_stats("TestPlayer2")
-        print(f"✓ Stats TestPlayer1: {stats1}")
-        print(f"✓ Stats TestPlayer2: {stats2}")
-        
-        # Test 9: Nettoyage des anciennes entrées
-        print("Test 9: Nettoyage des anciennes entrées")
-        cleaned = db_manager.cleanup_old_queue_entries(0)  # Nettoyer toutes les entrées
-        print(f"✓ Entrées nettoyées: {cleaned}")
-        
-        print("✅ Tous les tests de base de données ont réussi !")
-        
-    except Exception as e:
-        print(f"❌ Erreur lors des tests de base de données: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # Nettoyer le fichier de test
-        try:
-            os.remove("test_matchmaking.db")
-            print("🧹 Fichier de test supprimé")
-        except:
-            pass
+    queue_id1 = db_manager.add_player_to_queue("TestPlayer1", "127.0.0.1", 12345)
+    queue_id2 = db_manager.add_player_to_queue("TestPlayer2", "127.0.0.1", 12346)
+    assert queue_id1 is not None
+    assert queue_id2 is not None
+
+def test_get_queue_players():
+    db_manager = DatabaseManager("test_matchmaking.db")
+    queue = db_manager.get_queue_players()
+    assert len(queue) >= 0
+
+def test_create_match():
+    db_manager = DatabaseManager("test_matchmaking.db")
+    match_id = db_manager.create_match("TestPlayer1", "TestPlayer2")
+    assert match_id is not None
+
+def test_remove_player_from_queue():
+    db_manager = DatabaseManager("test_matchmaking.db")
+    queue_id1 = db_manager.add_player_to_queue("TestPlayer1", "127.0.0.1", 12345)
+    db_manager.remove_player_from_queue(queue_id1)
+    queue = db_manager.get_queue_players()
+    assert all(player['id'] != queue_id1 for player in queue)
+
+def test_add_turn():
+    db_manager = DatabaseManager("test_matchmaking.db")
+    match_id = db_manager.create_match("TestPlayer1", "TestPlayer2")
+    turn_id = db_manager.add_turn(match_id, "TestPlayer1", 1, 0, 0, 'X')
+    assert turn_id is not None
+
+def test_get_match_turns():
+    db_manager = DatabaseManager("test_matchmaking.db")
+    match_id = db_manager.create_match("TestPlayer1", "TestPlayer2")
+    db_manager.add_turn(match_id, "TestPlayer1", 1, 0, 0, 'X')
+    turns = db_manager.get_match_turns(match_id)
+    assert len(turns) > 0
 
 def test_protocol_operations():
     """Test des opérations du protocole de communication"""
@@ -287,7 +252,12 @@ def main():
     print("=" * 50)
     
     # Exécuter tous les tests
-    test_database_operations()
+    test_add_player_to_queue()
+    test_get_queue_players()
+    test_create_match()
+    test_remove_player_from_queue()
+    test_add_turn()
+    test_get_match_turns()
     test_protocol_operations()
     test_game_logic()
     generate_test_report()

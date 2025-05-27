@@ -188,8 +188,9 @@ class GameManager:
         )
         
         try:
-            match_info['player1_conn'].sendall(message1)
-            match_info['player2_conn'].sendall(message2)
+            # Add a delimiter (\n) to all outgoing messages
+            match_info['player1_conn'].sendall(message1 + b'\n')
+            match_info['player2_conn'].sendall(message2 + b'\n')
         except Exception as e:
             print(f"[ERROR] Erreur lors de l'envoi de l'état du jeu : {e}")
     

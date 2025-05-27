@@ -168,25 +168,17 @@ class ModernMatchmakingClient:
                     data = self.socket.recv(1024)
                     if not data:
                         break
-                        
+
                     buffer += data
-                    
+
                     # Traiter tous les messages complets dans le buffer
-                    while True:
-                        try:
-                            message, remaining_buffer = self.protocol.decode_message(buffer)
-                            buffer = remaining_buffer
-                            
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        if line.strip():
+                            message = json.loads(line.decode())
                             # Traiter le message dans le thread principal
                             self.root.after(0, self.process_server_message, message)
-                            
-                        except json.JSONDecodeError:
-                            # Message incomplet, attendre plus de données
-                            break
-                        except Exception as e:
-                            print(f"[CLIENT] Erreur décodage message : {e}")
-                            break
-                            
+
                 except socket.timeout:
                     continue
                 except Exception as e:

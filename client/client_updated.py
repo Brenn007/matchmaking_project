@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 import socket
 import threading
+import json
 
 SERVER_IP = '127.0.0.1'  # Localhost pour la compatibilité
 SERVER_PORT = 12345
@@ -48,7 +49,9 @@ class MatchmakingClient(tk.Tk):
             threading.Thread(target=self.listen_to_server, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Erreur de connexion", f"Impossible de se connecter au serveur : {e}")
-            self.socket = None    def listen_to_server(self):
+            self.socket = None
+
+    def listen_to_server(self):
         try:
             buffer = ""
             while True:
@@ -71,7 +74,6 @@ class MatchmakingClient(tk.Tk):
                         json_text = buffer[:json_end+1]
                         
                         # Tenter de parser le JSON pour vérifier qu'il est complet
-                        import json
                         message = json.loads(json_text)
                         
                         # Si on arrive ici, c'est un JSON valide
@@ -82,17 +84,19 @@ class MatchmakingClient(tk.Tk):
                         
                         # Retirer ce message du buffer
                         buffer = buffer[json_end+1:]
-                    except json.JSONDecodeError:                        # JSON incomplet, attendre plus de données
+                    except json.JSONDecodeError:
+                        # JSON incomplet, attendre plus de données
                         break
                     except Exception as e:
                         print(f"[CLIENT] Erreur de traitement JSON: {e}")
                         break
         except Exception as e:
             self.after(0, lambda: messagebox.showerror("Erreur", f"Erreur de communication avec le serveur : {e}"))
-            self.socket = None    def process_server_message(self, message):
+            self.socket = None
+
+    def process_server_message(self, message):
         """Traite les messages du serveur dans le thread principal"""
         try:
-            import json
             msg = json.loads(message)
             msg_type = msg.get("type")
             data = msg.get("data", {})
@@ -164,11 +168,24 @@ class MatchmakingClient(tk.Tk):
         except Exception as e:
             print(f"[CLIENT] Erreur lors du traitement du message: {e}")
 
-    def parse_match_info(self, message):
-        parts = message.split(',')
-        match_id = int(parts[0].split(':')[1].strip())
-        player_number = int(parts[1].split(':')[1].strip())
-        return match_id, player_number
+    def update_board_display(self, board_state):
+        """Met à jour l'affichage du plateau avec l'état donné"""
+        if len(board_state) != 9 or not hasattr(self, 'board_buttons'):
+            return
+            
+        for i in range(3):
+            for j in range(3):
+                index = i * 3 + j
+                cell = board_state[index]
+                
+                if cell == 'X':
+                    self.board_buttons[i][j]["text"] = 'X'
+                    self.board_buttons[i][j]["fg"] = "blue" if self.my_symbol == 'X' else "red"
+                elif cell == 'O':
+                    self.board_buttons[i][j]["text"] = 'O'
+                    self.board_buttons[i][j]["fg"] = "blue" if self.my_symbol == 'O' else "red"
+                else:
+                    self.board_buttons[i][j]["text"] = " "
 
     def show_game_board(self):
         self.status_label.config(text="Match en cours...")
@@ -186,6 +203,8 @@ class MatchmakingClient(tk.Tk):
             self.turn_label = tk.Label(self, text="", font=("Arial", 10))
             self.turn_label.pack(pady=5)
             
+            # Créer le plateau de jeu
+            self.board_buttons = []
             for i in range(3):
                 row = []
                 for j in range(3):
@@ -222,58 +241,30 @@ class MatchmakingClient(tk.Tk):
         # Envoyer le coup au serveur
         self.send_move(i, j)
         
-        # Vérifier la victoire ou match nul
-        if self.check_victory():
-            messagebox.showinfo("Victoire", f"Vous avez gagné !")
-            self.reset_board()
-            return
-        elif self.check_draw():
-            messagebox.showinfo("Match nul", "Le match est nul !")
-            self.reset_board()
-            return
+        # On ne vérifie plus la victoire localement car le serveur nous enverra l'état du jeu mis à jour
         
-        # Changer de tour
+        # Changer de tour en attendant la confirmation du serveur
         self.is_my_turn = False
         self.update_turn_display()
 
     def send_move(self, i, j):
         """Envoie le coup au serveur"""
-        move = f"{self.match_id},{self.player_number},{i}{j}"
-        self.socket.sendall(move.encode())
-        print(f"[CLIENT] Coup envoyé : {move}")  # Debug
-
-    def update_board_from_opponent(self, message):
-        """Met à jour le plateau avec le coup de l'adversaire"""
         try:
-            parts = message.split(':')
-            move = parts[1].strip()
-            i, j = int(move[0]), int(move[1])
+            # Format JSON pour la compatibilité avec le protocole
+            move_data = json.dumps({
+                "type": "make_move",
+                "data": {
+                    "match_id": self.match_id,
+                    "player_number": self.player_number,
+                    "position_x": i,
+                    "position_y": j
+                }
+            }).encode('utf-8')
             
-            # Le symbole de l'adversaire
-            opponent_symbol = 'O' if self.my_symbol == 'X' else 'X'
-            
-            # Placer le coup de l'adversaire
-            self.board_buttons[i][j]["text"] = opponent_symbol
-            self.board_buttons[i][j]["fg"] = "red"  # Couleur pour les coups adverses
-            
-            print(f"[CLIENT] Coup adversaire reçu : {i},{j} -> {opponent_symbol}")  # Debug
-            
-            # Vérifier la victoire ou match nul
-            if self.check_victory():
-                messagebox.showinfo("Défaite", "Votre adversaire a gagné !")
-                self.reset_board()
-                return
-            elif self.check_draw():
-                messagebox.showinfo("Match nul", "Le match est nul !")
-                self.reset_board()
-                return
-            
-            # C'est maintenant mon tour
-            self.is_my_turn = True
-            self.update_turn_display()
-            
+            self.socket.sendall(move_data)
+            print(f"[CLIENT] Coup envoyé : {i},{j}")
         except Exception as e:
-            print(f"[CLIENT] Erreur lors de la mise à jour du plateau : {e}")
+            print(f"[CLIENT] Erreur lors de l'envoi du coup : {e}")
 
     def check_victory(self):
         """Vérifie s'il y a une victoire"""
@@ -283,7 +274,7 @@ class MatchmakingClient(tk.Tk):
         for i in range(3):
             if board[i][0] == board[i][1] == board[i][2] != " ":
                 return True
-        
+                
         # Vérifier les colonnes
         for j in range(3):
             if board[0][j] == board[1][j] == board[2][j] != " ":
