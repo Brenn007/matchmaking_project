@@ -20,7 +20,7 @@ except ImportError:
     USE_NEW_PROTOCOL = False
     print("⚠️ Utilisation du mode compatibilité")
 
-def test_client(player_name, server_ip="127.0.0.1", server_port=12345):
+def test_client(player_name, server_ip="10.31.32.143", server_port=12345):
     """Test d'un client simple"""
     print(f"🔌 Test du client {player_name}")
     

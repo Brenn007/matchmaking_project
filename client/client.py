@@ -3,7 +3,7 @@ from tkinter import messagebox
 import socket
 import threading
 
-SERVER_IP = '127.0.0.1'  # Localhost pour la compatibilité
+SERVER_IP = '10.31.32.143'  # Localhost pour la compatibilité
 SERVER_PORT = 12345
 
 class MatchmakingClient(tk.Tk):

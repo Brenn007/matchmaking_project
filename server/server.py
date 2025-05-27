@@ -16,7 +16,7 @@ from jeu.database import DatabaseManager
 from jeu.game_logic import GameManager
 from shared.protocol import Protocol, MessageType, GameMessages
 
-HOST = '127.0.0.1'  # Localhost pour la compatibilité
+HOST = '10.31.32.143'  # Localhost pour la compatibilité
 PORT = 12345
 HTTP_PORT = 8080
 
