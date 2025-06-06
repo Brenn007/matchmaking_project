@@ -4,6 +4,7 @@ import threading
 import time
 import signal
 import sys
+import json
 
 HOST = '10.31.32.143'
 PORT = 12345
@@ -15,29 +16,62 @@ match_id_counter = 1
 lock = threading.Lock()
 
 def check_game_end(board):
-    lines = [
-        board[0:3], board[3:6], board[6:9],  # lignes
-        board[0::3], board[1::3], board[2::3],  # colonnes
-        board[0::4], board[2:7:2]  # diagonales
-    ]
-    if 'XXX' in lines:
-        return True, 1
-    elif 'OOO' in lines:
-        return True, 2
-    elif ' ' not in board:
+    """Vérifie si le jeu est terminé et retourne (is_over, winner)"""
+    # Vérifier les lignes
+    for i in range(0, 9, 3):
+        if board[i] == board[i+1] == board[i+2] != ' ':
+            return True, 1 if board[i] == 'X' else 2
+    
+    # Vérifier les colonnes
+    for i in range(3):
+        if board[i] == board[i+3] == board[i+6] != ' ':
+            return True, 1 if board[i] == 'X' else 2
+    
+    # Vérifier les diagonales
+    if board[0] == board[4] == board[8] != ' ':
+        return True, 1 if board[0] == 'X' else 2
+    if board[2] == board[4] == board[6] != ' ':
+        return True, 1 if board[2] == 'X' else 2
+    
+    # Vérifier si match nul
+    if ' ' not in board:
         return True, 0
+    
     return False, None
+
+def send_game_state(match):
+    """Envoie l'état du jeu à tous les joueurs du match"""
+    state = {
+        'type': 'game_state',
+        'board': match['board'],
+        'current_turn': match['current_turn'],
+        'is_finished': match['is_finished'],
+        'winner': match['winner']
+    }
+    
+    message = json.dumps(state)
+    try:
+        match['player1_conn'].sendall(message.encode() + b'\n')
+    except:
+        print("[!] Impossible d'envoyer à player1")
+    
+    try:
+        match['player2_conn'].sendall(message.encode() + b'\n')
+    except:
+        print("[!] Impossible d'envoyer à player2")
 
 def handle_client(conn, addr):
     global queue
     print(f"[+] Connexion de {addr}")
+    player_match_id = None
+    player_number = None
+    
     try:
         pseudo = conn.recv(1024).decode()
-        print(f"[DEBUG] Message brut reçu : {pseudo}")  # Log détaillé du message reçu
+        print(f"[DEBUG] Message brut reçu : {pseudo}")
 
-        # Vérifier si la requête ressemble à une requête HTTP
         if pseudo.startswith("GET") or pseudo.startswith("POST"):
-            print(f"[!] Requête HTTP détectée sur le serveur socket : {pseudo[:50]}...")
+            print(f"[!] Requête HTTP détectée sur le serveur socket")
             conn.close()
             return
 
@@ -45,101 +79,189 @@ def handle_client(conn, addr):
 
         with lock:
             queue.append((addr[0], addr[1], pseudo, conn))
-            print(f"[DEBUG] File d'attente actuelle : {queue}")  # Log de l'état de la file d'attente
+            print(f"[DEBUG] File d'attente actuelle : {len(queue)} joueur(s)")
 
         conn.sendall(b"En attente d'un adversaire...\n")
 
+        # Attendre d'être assigné à un match
+        while player_match_id is None:
+            with lock:
+                for match_id, match in matches.items():
+                    if match['player1_conn'] == conn:
+                        player_match_id = match_id
+                        player_number = 1
+                        break
+                    elif match['player2_conn'] == conn:
+                        player_match_id = match_id
+                        player_number = 2
+                        break
+            time.sleep(0.1)
+
+        print(f"[DEBUG] Joueur {pseudo} assigné au match {player_match_id} comme joueur {player_number}")
+
+        # Boucle principale du jeu
         while True:
             try:
                 data = conn.recv(1024).decode()
-                print(f"[DEBUG] Données reçues : {data}")  # Log détaillé des données reçues
                 if not data:
                     print(f"[!] Déconnexion de {addr}")
                     break
-                handle_move(data)
+                
+                print(f"[DEBUG] Données reçues de {pseudo}: {data}")
+                
+                # Traiter le coup
+                if data.startswith("MOVE:"):
+                    move_data = data[5:].strip()
+                    handle_move(player_match_id, player_number, move_data)
+                
             except Exception as e:
                 print(f"[!] Erreur lors du traitement des données de {addr} : {e}")
                 break
+                
     except Exception as e:
         print(f"[!] Erreur avec {addr} : {e}")
     finally:
-        print(f"[DEBUG] Connexion fermée pour {addr}")  # Log de la fermeture de connexion
+        # Nettoyer la connexion
+        with lock:
+            # Retirer de la queue si encore dedans
+            queue[:] = [(ip, port, p, c) for ip, port, p, c in queue if c != conn]
+            
+            # Gérer la déconnexion en plein match
+            if player_match_id and player_match_id in matches:
+                match = matches[player_match_id]
+                other_conn = match['player2_conn'] if player_number == 1 else match['player1_conn']
+                try:
+                    other_conn.sendall(b"Votre adversaire s'est deconnecte\n")
+                except:
+                    pass
+                del matches[player_match_id]
+        
         conn.close()
 
-def handle_move(data):
+def handle_move(match_id, player_number, move):
+    """Gère un coup joué par un joueur"""
     try:
-        match_id, player_number, move = data.strip().split(',')
         i, j = int(move[0]), int(move[1])
-        player_number = int(player_number)
-
+        
         with lock:
-            match = matches.get(int(match_id))
+            match = matches.get(match_id)
             if not match:
+                print(f"[!] Match {match_id} introuvable")
                 return
-
+            
+            # Vérifier si c'est le tour du joueur
+            if match['current_turn'] != player_number:
+                player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
+                player_conn.sendall(b"Ce n'est pas votre tour!\n")
+                return
+            
+            # Vérifier si la partie est finie
+            if match['is_finished']:
+                player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
+                player_conn.sendall(b"La partie est terminee!\n")
+                return
+            
             board = list(match['board'])
             index = i * 3 + j
-
+            
+            # Vérifier si la case est vide
             if board[index] != ' ':
-                print("[!] Coup invalide : case déjà occupée")
+                player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
+                player_conn.sendall(b"Case deja occupee!\n")
                 return
-
+            
+            # Jouer le coup
             board[index] = 'X' if player_number == 1 else 'O'
             match['board'] = ''.join(board)
-
+            
+            # Vérifier si la partie est terminée
             is_over, winner = check_game_end(match['board'])
             match['is_finished'] = is_over
             match['winner'] = winner
-
-            target_conn = match['player2_conn'] if player_number == 1 else match['player1_conn']
-            target_conn.sendall(f"Coup joué: {move}".encode())
-
+            
+            # Changer de tour
+            if not is_over:
+                match['current_turn'] = 2 if player_number == 1 else 1
+            
+            # Envoyer l'état du jeu mis à jour aux deux joueurs
+            send_game_state(match)
+            
+            print(f"[+] Coup joué: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
+            
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
 
-def notify_player(conn, match_id, player_number):
+def notify_players_match_found(match_id, match):
+    """Notifie les deux joueurs qu'un match a été trouvé"""
     try:
-        message = f"Match trouvé ! ID: {match_id}, Joueur: {player_number}"
-        conn.sendall(message.encode())
+        # Notifier le joueur 1
+        message1 = json.dumps({
+            'type': 'match_found',
+            'match_id': match_id,
+            'player_number': 1,
+            'opponent': 'Joueur 2'
+        })
+        match['player1_conn'].sendall(message1.encode() + b'\n')
+        
+        # Notifier le joueur 2
+        message2 = json.dumps({
+            'type': 'match_found',
+            'match_id': match_id,
+            'player_number': 2,
+            'opponent': 'Joueur 1'
+        })
+        match['player2_conn'].sendall(message2.encode() + b'\n')
+        
+        # Envoyer l'état initial du jeu
+        time.sleep(0.5)  # Petit délai pour laisser le temps au client de se préparer
+        send_game_state(match)
+        
     except Exception as e:
-        print(f"[!] Impossible de notifier un joueur : {e}")
+        print(f"[!] Erreur lors de la notification des joueurs : {e}")
 
 def matchmaking():
+    """Thread de matchmaking qui associe les joueurs en attente"""
     global match_id_counter
     while True:
         with lock:
             # Nettoyer la file d'attente des connexions fermées
-            queue[:] = [player for player in queue if player[3].fileno() != -1]
-
+            queue[:] = [(ip, port, pseudo, conn) for ip, port, pseudo, conn in queue 
+                       if conn.fileno() != -1]
+            
             if len(queue) >= 2:
                 p1 = queue.pop(0)
                 p2 = queue.pop(0)
-
+                
                 match_id = match_id_counter
                 match_id_counter += 1
-
+                
                 matches[match_id] = {
                     'player1_conn': p1[3],
                     'player2_conn': p2[3],
+                    'player1_pseudo': p1[2],
+                    'player2_pseudo': p2[2],
                     'board': ' ' * 9,
+                    'current_turn': 1,  # Le joueur 1 (X) commence toujours
                     'is_finished': False,
                     'winner': None
                 }
-
+                
                 print(f"[+] Match créé entre {p1[2]} et {p2[2]} (ID: {match_id})")
-                notify_player(p1[3], match_id, 1)
-                notify_player(p2[3], match_id, 2)
-
-        time.sleep(2)
+                notify_players_match_found(match_id, matches[match_id])
+        
+        time.sleep(1)
 
 def start_server():
+    """Démarre le serveur de jeu principal"""
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((HOST, PORT))
     server.listen()
     print(f"[+] Serveur en écoute sur {HOST}:{PORT}")
-
+    
+    # Démarrer le thread de matchmaking
     threading.Thread(target=matchmaking, daemon=True).start()
-
+    
     while True:
         conn, addr = server.accept()
         threading.Thread(target=handle_client, args=(conn, addr)).start()
@@ -149,18 +271,36 @@ class MyHandler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"<html><body><h1>Serveur HTTP actif</h1></body></html>")
+        
+        # Page d'état du serveur
+        with lock:
+            html = f"""
+            <html>
+            <body>
+                <h1>Serveur de Matchmaking TicTacToe</h1>
+                <p>Joueurs en attente: {len(queue)}</p>
+                <p>Matchs en cours: {len(matches)}</p>
+                <p>Total de matchs créés: {match_id_counter - 1}</p>
+            </body>
+            </html>
+            """
+        
+        self.wfile.write(html.encode())
 
 def signal_handler(sig, frame):
     print("\n[!] Arrêt du serveur...")
     sys.exit(0)
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)  # Capture Ctrl+C
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Démarrer le serveur de jeu dans un thread
     threading.Thread(target=start_server, daemon=True).start()
+    
+    # Démarrer le serveur HTTP pour monitoring
     with HTTPServer((HOST, HTTP_PORT), MyHandler) as http_server:
-        print(f"Serveur HTTP en écoute sur {HOST}:{HTTP_PORT}")
+        print(f"[+] Serveur HTTP en écoute sur {HOST}:{HTTP_PORT}")
         try:
             http_server.serve_forever()
         except KeyboardInterrupt:
-            print("\n[!] Serveur HTTP arrêté.")
+            print("\n[!] Serveurs arrêtés.")

@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 import socket
 import threading
-
+import json
 
 SERVER_IP = '10.31.32.143'
 SERVER_PORT = 12345
@@ -10,32 +10,47 @@ SERVER_PORT = 12345
 class MatchmakingClient(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Client de Matchmaking")
+        self.title("Client de Matchmaking TicTacToe")
         self.geometry("300x400")
+        self.resizable(False, False)
         
-        self.pseudo_label = tk.Label(self, text="Entrez votre pseudo :")
-        self.pseudo_label.pack(pady=10)
+        # Interface de connexion
+        self.pseudo_label = tk.Label(self, text="Entrez votre pseudo :", font=("Arial", 12))
+        self.pseudo_label.pack(pady=5)
         
-        self.pseudo_entry = tk.Entry(self)
+        self.pseudo_entry = tk.Entry(self, font=("Arial", 11), width=20)
         self.pseudo_entry.pack(pady=5)
         
-        self.connect_button = tk.Button(self, text="Se connecter", command=self.connect_to_server)
-        self.connect_button.pack(pady=10)
+        self.connect_button = tk.Button(self, text="Se connecter", command=self.connect_to_server,
+                                      bg="#4CAF50", fg="white", font=("Arial", 11), padx=20, pady=5)
+        self.connect_button.pack(pady=5)
         
-        self.status_label = tk.Label(self, text="")
-        self.status_label.pack(pady=10)
+        self.status_label = tk.Label(self, text="", font=("Arial", 10), fg="blue", wraplength=300)
+        self.status_label.pack(pady=5)
         
+        # Variables de jeu
         self.socket = None
+        self.board_frame = None
         self.board_buttons = []
-        self.current_player = 'X'  #'X' ou 'O'
         self.match_id = None
         self.player_number = None
+        self.my_symbol = None
+        self.opponent_symbol = None
+        self.is_my_turn = False
+        self.game_started = False
+        
+        # Label pour afficher le tour actuel
+        self.turn_label = tk.Label(self, text="", font=("Arial", 12, "bold"))
+        self.turn_label.pack(pady=3)
 
     def connect_to_server(self):
-        pseudo = self.pseudo_entry.get()
+        pseudo = self.pseudo_entry.get().strip()
         if not pseudo:
             messagebox.showwarning("Pseudo manquant", "Veuillez entrer un pseudo.")
             return
+        
+        # Désactiver le bouton de connexion
+        self.connect_button.config(state=tk.DISABLED)
         
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -43,90 +58,203 @@ class MatchmakingClient(tk.Tk):
             self.socket.sendall(pseudo.encode())
             self.status_label.config(text="En attente d'un adversaire...")
             
-            #ecoute des messages du serveur
+            # Écoute des messages du serveur
             threading.Thread(target=self.listen_to_server, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Erreur de connexion", f"Impossible de se connecter au serveur : {e}")
             self.socket = None
+            self.connect_button.config(state=tk.NORMAL)
 
     def listen_to_server(self):
+        """Thread qui écoute les messages du serveur"""
+        buffer = ""
         try:
             while True:
-                message = self.socket.recv(1024).decode()
-                if message:
-                    self.status_label.config(text=message)
-                    if "Match trouvé" in message:
-                        self.match_id, self.player_number = self.parse_match_info(message)
-                        self.show_game_board()
-                    elif "Coup joué" in message:
-                        self.update_board(message)
+                data = self.socket.recv(1024).decode()
+                if not data:
+                    break
+                
+                buffer += data
+                
+                # Traiter chaque ligne complète
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if line.strip():
+                        self.process_server_message(line.strip())
+                        
         except Exception as e:
-            messagebox.showerror("Erreur", f"Erreur de communication avec le serveur : {e}")
+            self.after(0, lambda: messagebox.showerror("Erreur", f"Connexion perdue : {e}"))
             self.socket = None
+        finally:
+            self.after(0, self.disconnect)
 
-    def parse_match_info(self, message):
-        parts = message.split(',')
-        match_id = int(parts[0].split(':')[1].strip())
-        player_number = int(parts[1].split(':')[1].strip())
-        return match_id, player_number
+    def process_server_message(self, message):
+        """Traite les messages reçus du serveur"""
+        try:
+            # Essayer de parser comme JSON
+            data = json.loads(message)
+            
+            if data['type'] == 'match_found':
+                self.match_id = data['match_id']
+                self.player_number = data['player_number']
+                self.my_symbol = 'X' if self.player_number == 1 else 'O'
+                self.opponent_symbol = 'O' if self.player_number == 1 else 'X'
+                
+                self.after(0, lambda: self.status_label.config(
+                    text=f"Match trouvé! Vous êtes le joueur {self.player_number} ({self.my_symbol})"))
+                self.after(0, self.create_game_board)
+                
+            elif data['type'] == 'game_state':
+                self.after(0, lambda: self.update_game_state(data))
+                
+        except json.JSONDecodeError:
+            # Message non-JSON (ancien format)
+            self.after(0, lambda: self.status_label.config(text=message))
 
-    def show_game_board(self):
-        self.status_label.config(text="Match en cours...")
-        board_frame = tk.Frame(self)
-        board_frame.pack(pady=10)
+    def create_game_board(self):
+        """Crée le plateau de jeu"""
+        if self.board_frame:
+            self.board_frame.destroy()
         
+        self.board_frame = tk.Frame(self, bg="#f0f0f0", relief=tk.RAISED, bd=2)
+        self.board_frame.pack(pady=10)
+        
+        self.board_buttons = []
         for i in range(3):
             row = []
             for j in range(3):
-                button = tk.Button(board_frame, text=" ", width=10, height=3,
-                                   command=lambda i=i, j=j: self.make_move(i, j))
-                button.grid(row=i, column=j)
+                button = tk.Button(self.board_frame, text=" ", width=3, height=1,
+                                 font=("Arial", 20, "bold"),
+                                 command=lambda r=i, c=j: self.make_move(r, c),
+                                 bg="white", relief=tk.RAISED, bd=2)
+                button.grid(row=i, column=j, padx=1, pady=1)
                 row.append(button)
             self.board_buttons.append(row)
+        
+        self.game_started = True
 
-    def make_move(self, i, j):
-        if self.board_buttons[i][j]["text"] == " ":
-            self.board_buttons[i][j]["text"] = self.current_player
-            self.send_move(i, j)
-            if self.check_victory():
-                messagebox.showinfo("Victoire", f"Le joueur {self.current_player} a gagné !")
-                self.reset_board()
-            elif self.check_draw():
-                messagebox.showinfo("Match nul", "Le match est nul !")
-                self.reset_board()
-            self.current_player = 'O' if self.current_player == 'X' else 'X'
-
-    def send_move(self, i, j):
-        move = f"{self.match_id},{self.player_number},{i}{j}"
-        self.socket.sendall(move.encode())
-
-    def update_board(self, message):
-        parts = message.split(':')
-        move = parts[1].strip()
-        i, j = int(move[0]), int(move[1])
-        self.board_buttons[i][j]["text"] = 'O' if self.current_player == 'X' else 'X'
-
-    def check_victory(self):
-        board = [[self.board_buttons[i][j]["text"] for j in range(3)] for i in range(3)]
-        for i in range(3):
-            if board[i][0] == board[i][1] == board[i][2] != " ":
-                return True
-            if board[0][i] == board[1][i] == board[2][i] != " ":
-                return True
-        if board[0][0] == board[1][1] == board[2][2] != " ":
-            return True
-        if board[0][2] == board[1][1] == board[2][0] != " ":
-            return True
-        return False
-
-    def check_draw(self):
-        return all(self.board_buttons[i][j]["text"] != " " for i in range(3) for j in range(3))
-
-    def reset_board(self):
+    def update_game_state(self, state):
+        """Met à jour l'interface selon l'état du jeu reçu du serveur"""
+        if not self.game_started:
+            return
+        
+        # Mettre à jour le plateau
+        board = state['board']
         for i in range(3):
             for j in range(3):
-                self.board_buttons[i][j]["text"] = " "
+                symbol = board[i * 3 + j]
+                self.board_buttons[i][j]['text'] = symbol if symbol != ' ' else ' '
+                
+                # Colorer les cases selon le joueur
+                if symbol == 'X':
+                    self.board_buttons[i][j].config(bg="#ffcccc", fg="#cc0000")  # Rouge clair avec texte rouge foncé
+                elif symbol == 'O':
+                    self.board_buttons[i][j].config(bg="#ccccff", fg="#0000cc")  # Bleu clair avec texte bleu foncé
+                else:
+                    self.board_buttons[i][j].config(bg="white", fg="black")
+        
+        # Mettre à jour le statut du tour
+        self.is_my_turn = (state['current_turn'] == self.player_number and not state['is_finished'])
+        
+        if state['is_finished']:
+            # Partie terminée
+            if state['winner'] == 0:
+                self.turn_label.config(text="Match nul!", fg="orange")
+                messagebox.showinfo("Fin de partie", "Match nul!")
+            elif state['winner'] == self.player_number:
+                self.turn_label.config(text="Vous avez gagné! 🎉", fg="green")
+                messagebox.showinfo("Victoire", "Félicitations, vous avez gagné!")
+            else:
+                self.turn_label.config(text="Vous avez perdu...", fg="red")
+                messagebox.showinfo("Défaite", "Vous avez perdu. Réessayez!")
+            
+            # Proposer une nouvelle partie
+            self.after(1000, self.ask_new_game)
+        else:
+            # Partie en cours
+            if self.is_my_turn:
+                self.turn_label.config(text="C'est votre tour!", fg="green")
+                # Activer les boutons
+                for row in self.board_buttons:
+                    for button in row:
+                        if button['text'] == ' ':
+                            button.config(state=tk.NORMAL)
+            else:
+                self.turn_label.config(text="Tour de l'adversaire...", fg="red")
+                # Désactiver tous les boutons
+                for row in self.board_buttons:
+                    for button in row:
+                        button.config(state=tk.DISABLED)
+
+    def make_move(self, i, j):
+        """Envoie un coup au serveur"""
+        if not self.is_my_turn:
+            messagebox.showwarning("Pas votre tour", "Attendez votre tour!")
+            return
+        
+        if self.board_buttons[i][j]['text'] != ' ':
+            messagebox.showwarning("Case occupée", "Cette case est déjà occupée!")
+            return
+        
+        # Envoyer le coup au serveur
+        move_message = f"MOVE:{i}{j}"
+        try:
+            self.socket.sendall(move_message.encode())
+            # Désactiver temporairement tous les boutons
+            for row in self.board_buttons:
+                for button in row:
+                    button.config(state=tk.DISABLED)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'envoyer le coup : {e}")
+
+    def ask_new_game(self):
+        """Demande si le joueur veut faire une nouvelle partie"""
+        response = messagebox.askyesno("Nouvelle partie", "Voulez-vous faire une nouvelle partie?")
+        if response:
+            self.reset_game()
+        else:
+            self.quit()
+
+    def reset_game(self):
+        """Réinitialise le jeu pour une nouvelle partie"""
+        if self.board_frame:
+            self.board_frame.destroy()
+        
+        self.board_buttons = []
+        self.match_id = None
+        self.player_number = None
+        self.my_symbol = None
+        self.opponent_symbol = None
+        self.is_my_turn = False
+        self.game_started = False
+        
+        self.turn_label.config(text="")
+        self.status_label.config(text="En attente d'un adversaire...")
+        
+        # Note: Le serveur devrait gérer la réinscription dans la queue
+
+    def disconnect(self):
+        """Déconnecte le client proprement"""
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+            self.socket = None
+        
+        self.connect_button.config(state=tk.NORMAL)
+        self.status_label.config(text="Déconnecté du serveur")
+        self.turn_label.config(text="")
+        
+        if self.board_frame:
+            self.board_frame.destroy()
+
+    def on_closing(self):
+        """Appelé quand la fenêtre est fermée"""
+        self.disconnect()
+        self.destroy()
 
 if __name__ == "__main__":
     app = MatchmakingClient()
+    app.protocol("WM_DELETE_WINDOW", app.on_closing)
     app.mainloop()
