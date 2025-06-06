@@ -115,7 +115,15 @@ class MatchmakingClient(tk.Tk):
                 self.after(0, self.create_game_board)
                 
             elif data['type'] == 'game_state':
-                print(f"[DEBUG Client] État du jeu reçu: board='{data['board']}', turn={data['current_turn']}")
+                print(f"[DEBUG Client] État du jeu reçu: board='{data['board']}', turn={data['current_turn']}, finished={data['is_finished']}")
+                # Afficher le plateau pour debug
+                board = data['board']
+                print("[DEBUG Client] Plateau actuel:")
+                for i in range(3):
+                    row = board[i*3:(i+1)*3]
+                    print(f"  {row[0]} | {row[1]} | {row[2]}")
+                    if i < 2:
+                        print("  ---------")
                 self.after(0, lambda: self.update_game_state(data))
                 
         except json.JSONDecodeError:

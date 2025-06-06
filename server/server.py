@@ -105,6 +105,8 @@ def handle_client(conn, addr):
                     if player_match_id:
                         move_data = data[5:].strip()
                         handle_move(player_match_id, player_number, move_data)
+                    else:
+                        print(f"[!] Coup reçu mais joueur pas dans un match: {data}")
                 else:
                     # C'est probablement un nouveau pseudo pour rejouer
                     if player_match_id and player_match_id in matches:
