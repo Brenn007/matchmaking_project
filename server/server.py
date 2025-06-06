@@ -49,30 +49,24 @@ def send_game_state(match):
         'winner': match['winner']
     }
     
-    message = json.dumps(state) + '\n'  # Ajouter \n important!
-    print(f"[DEBUG] Envoi de l'état: {state}")
+    message = json.dumps(state)
+    try:
+        match['player1_conn'].sendall(message.encode() + b'\n')
+    except:
+        print("[!] Impossible d'envoyer à player1")
     
     try:
-        match['player1_conn'].sendall(message.encode())
-        print("[DEBUG] État envoyé au joueur 1")
-    except Exception as e:
-        print(f"[!] Impossible d'envoyer à player1: {e}")
-    
-    try:
-        match['player2_conn'].sendall(message.encode())
-        print("[DEBUG] État envoyé au joueur 2")
-    except Exception as e:
-        print(f"[!] Impossible d'envoyer à player2: {e}")
+        match['player2_conn'].sendall(message.encode() + b'\n')
+    except:
+        print("[!] Impossible d'envoyer à player2")
 
 def handle_client(conn, addr):
     global queue
     print(f"[+] Connexion de {addr}")
     player_match_id = None
     player_number = None
-    pseudo = None
     
     try:
-        # Recevoir le pseudo initial
         pseudo = conn.recv(1024).decode()
         print(f"[DEBUG] Message brut reçu : {pseudo}")
 
@@ -83,14 +77,29 @@ def handle_client(conn, addr):
 
         print(f"[+] Pseudo reçu : {pseudo}")
 
-        # Ajouter à la file d'attente
         with lock:
             queue.append((addr[0], addr[1], pseudo, conn))
             print(f"[DEBUG] File d'attente actuelle : {len(queue)} joueur(s)")
 
         conn.sendall(b"En attente d'un adversaire...\n")
 
-        # Boucle principale
+        # Attendre d'être assigné à un match
+        while player_match_id is None:
+            with lock:
+                for match_id, match in matches.items():
+                    if match['player1_conn'] == conn:
+                        player_match_id = match_id
+                        player_number = 1
+                        break
+                    elif match['player2_conn'] == conn:
+                        player_match_id = match_id
+                        player_number = 2
+                        break
+            time.sleep(0.1)
+
+        print(f"[DEBUG] Joueur {pseudo} assigné au match {player_match_id} comme joueur {player_number}")
+
+        # Boucle principale du jeu
         while True:
             try:
                 data = conn.recv(1024).decode()
@@ -100,60 +109,10 @@ def handle_client(conn, addr):
                 
                 print(f"[DEBUG] Données reçues de {pseudo}: {data}")
                 
-                # Vérifier si c'est un coup ou un nouveau pseudo (réinscription)
+                # Traiter le coup
                 if data.startswith("MOVE:"):
-                    if player_match_id:
-                        move_data = data[5:].strip()
-                        handle_move(player_match_id, player_number, move_data)
-                    else:
-                        print(f"[!] Coup reçu mais joueur pas dans un match: {data}")
-                elif ',' in data and len(data.split(',')) == 3:
-                    # Format original : match_id,player_number,move
-                    try:
-                        parts = data.strip().split(',')
-                        recv_match_id = int(parts[0])
-                        recv_player_number = int(parts[1])
-                        move = parts[2]
-                        
-                        # Vérifier que les IDs correspondent
-                        if recv_match_id == player_match_id and recv_player_number == player_number:
-                            handle_move(recv_match_id, recv_player_number, move)
-                        else:
-                            print(f"[!] IDs ne correspondent pas: reçu {recv_match_id},{recv_player_number} vs attendu {player_match_id},{player_number}")
-                    except Exception as e:
-                        print(f"[!] Erreur parsing du coup: {e}")
-                else:
-                    # C'est probablement un nouveau pseudo pour rejouer
-                    if player_match_id and player_match_id in matches:
-                        # Nettoyer l'ancien match si encore présent
-                        with lock:
-                            if player_match_id in matches:
-                                del matches[player_match_id]
-                    
-                    # Réinitialiser les variables du joueur
-                    player_match_id = None
-                    player_number = None
-                    pseudo = data.strip()
-                    
-                    # Réinscrire dans la queue
-                    with lock:
-                        queue.append((addr[0], addr[1], pseudo, conn))
-                        print(f"[+] {pseudo} réinscrit dans la file d'attente")
-                    
-                    conn.sendall(b"En attente d'un adversaire...\n")
-                
-                # Vérifier si le joueur a été assigné à un nouveau match
-                if not player_match_id:
-                    with lock:
-                        for match_id, match in matches.items():
-                            if match['player1_conn'] == conn:
-                                player_match_id = match_id
-                                player_number = 1
-                                break
-                            elif match['player2_conn'] == conn:
-                                player_match_id = match_id
-                                player_number = 2
-                                break
+                    move_data = data[5:].strip()
+                    handle_move(player_match_id, player_number, move_data)
                 
             except Exception as e:
                 print(f"[!] Erreur lors du traitement des données de {addr} : {e}")
@@ -183,7 +142,6 @@ def handle_move(match_id, player_number, move):
     """Gère un coup joué par un joueur"""
     try:
         i, j = int(move[0]), int(move[1])
-        print(f"[DEBUG] handle_move appelé: match_id={match_id}, player={player_number}, move=({i},{j})")
         
         with lock:
             match = matches.get(match_id)
@@ -195,7 +153,6 @@ def handle_move(match_id, player_number, move):
             if match['current_turn'] != player_number:
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
                 player_conn.sendall(b"Ce n'est pas votre tour!\n")
-                print(f"[!] Joueur {player_number} a essayé de jouer mais ce n'est pas son tour")
                 return
             
             # Vérifier si la partie est finie
@@ -211,13 +168,11 @@ def handle_move(match_id, player_number, move):
             if board[index] != ' ':
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
                 player_conn.sendall(b"Case deja occupee!\n")
-                print(f"[!] Case ({i},{j}) déjà occupée")
                 return
             
             # Jouer le coup
             board[index] = 'X' if player_number == 1 else 'O'
             match['board'] = ''.join(board)
-            print(f"[+] Coup joué avec succès. Nouveau plateau: {match['board']}")
             
             # Vérifier si la partie est terminée
             is_over, winner = check_game_end(match['board'])
@@ -229,15 +184,12 @@ def handle_move(match_id, player_number, move):
                 match['current_turn'] = 2 if player_number == 1 else 1
             
             # Envoyer l'état du jeu mis à jour aux deux joueurs
-            print(f"[DEBUG] Envoi de l'état mis à jour aux deux joueurs")
             send_game_state(match)
             
-            print(f"[+] Coup traité: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
+            print(f"[+] Coup joué: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
             
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
-        import traceback
-        traceback.print_exc()
 
 def notify_players_match_found(match_id, match):
     """Notifie les deux joueurs qu'un match a été trouvé"""
