@@ -107,6 +107,21 @@ def handle_client(conn, addr):
                         handle_move(player_match_id, player_number, move_data)
                     else:
                         print(f"[!] Coup reçu mais joueur pas dans un match: {data}")
+                elif ',' in data and len(data.split(',')) == 3:
+                    # Format original : match_id,player_number,move
+                    try:
+                        parts = data.strip().split(',')
+                        recv_match_id = int(parts[0])
+                        recv_player_number = int(parts[1])
+                        move = parts[2]
+                        
+                        # Vérifier que les IDs correspondent
+                        if recv_match_id == player_match_id and recv_player_number == player_number:
+                            handle_move(recv_match_id, recv_player_number, move)
+                        else:
+                            print(f"[!] IDs ne correspondent pas: reçu {recv_match_id},{recv_player_number} vs attendu {player_match_id},{player_number}")
+                    except Exception as e:
+                        print(f"[!] Erreur parsing du coup: {e}")
                 else:
                     # C'est probablement un nouveau pseudo pour rejouer
                     if player_match_id and player_match_id in matches:

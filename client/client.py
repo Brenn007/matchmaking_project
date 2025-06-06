@@ -242,8 +242,8 @@ class MatchmakingClient(tk.Tk):
             messagebox.showwarning("Case occupée", "Cette case est déjà occupée!")
             return
         
-        # Envoyer le coup au serveur
-        move_message = f"MOVE:{i}{j}"
+        # Envoyer le coup au serveur - Format attendu par le serveur original
+        move_message = f"{self.match_id},{self.player_number},{i}{j}"
         try:
             print(f"[DEBUG Client] Envoi du coup: {move_message}")  # Debug
             self.socket.sendall(move_message.encode())
