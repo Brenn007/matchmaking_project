@@ -109,7 +109,9 @@ class MatchmakingClient(tk.Tk):
                 self.opponent_symbol = 'O' if self.player_number == 1 else 'X'
                 
                 self.after(0, lambda: self.status_label.config(
-                    text=f"Match trouvé! Vous êtes le joueur {self.player_number} ({self.my_symbol})"))
+                    text=f"Match trouvé! Vous êtes le joueur {self.player_number} ({self.my_symbol})\n" +
+                    f"{'Vous commencez!' if self.player_number == 1 else 'Votre adversaire (X) commence.'}",
+                    fg="blue", wraplength=300))
                 self.after(0, self.create_game_board)
                 
             elif data['type'] == 'game_state':
@@ -197,25 +199,35 @@ class MatchmakingClient(tk.Tk):
         else:
             # Partie en cours
             if self.is_my_turn:
-                self.turn_label.config(text="C'est votre tour!", fg="green")
-                # Activer les boutons vides
+                self.turn_label.config(text="C'est votre tour! Cliquez sur une case vide", fg="green")
+                self.status_label.config(text=f"Vous jouez avec les {self.my_symbol}", fg="green")
+                # Activer les boutons vides et les mettre en surbrillance
                 for row in self.board_buttons:
                     for button in row:
                         if button['text'] == ' ':
-                            button.config(state=tk.NORMAL)
+                            button.config(state=tk.NORMAL, bg="#e6ffe6", cursor="hand2")
                         else:
-                            button.config(state=tk.DISABLED)
+                            button.config(state=tk.DISABLED, cursor="arrow")
             else:
-                self.turn_label.config(text="Tour de l'adversaire...", fg="red")
+                current_player_symbol = 'X' if state['current_turn'] == 1 else 'O'
+                self.turn_label.config(text=f"Tour de l'adversaire ({current_player_symbol})... Patientez", fg="red")
+                self.status_label.config(text=f"Vous jouez avec les {self.my_symbol}", fg="blue")
                 # Désactiver tous les boutons
                 for row in self.board_buttons:
                     for button in row:
-                        button.config(state=tk.DISABLED)
+                        button.config(state=tk.DISABLED, cursor="arrow")
+                        # Remettre la couleur normale aux cases vides
+                        if button['text'] == ' ':
+                            button.config(bg="white")
 
     def make_move(self, i, j):
         """Envoie un coup au serveur"""
         if not self.is_my_turn:
-            messagebox.showwarning("Pas votre tour", "Attendez votre tour!")
+            # Message plus informatif
+            current_turn_symbol = 'X' if self.player_number == 2 else 'O'
+            messagebox.showinfo("Pas votre tour", 
+                f"C'est au tour de l'adversaire ({current_turn_symbol}) de jouer.\n\n" +
+                f"Vous jouez avec les {self.my_symbol} et devez attendre votre tour.")
             return
         
         if self.board_buttons[i][j]['text'] != ' ':
@@ -231,6 +243,12 @@ class MatchmakingClient(tk.Tk):
             for row in self.board_buttons:
                 for button in row:
                     button.config(state=tk.DISABLED)
+            # Feedback visuel immédiat
+            self.board_buttons[i][j]['text'] = self.my_symbol
+            if self.my_symbol == 'X':
+                self.board_buttons[i][j].config(bg="#ffcccc", fg="#cc0000")
+            else:
+                self.board_buttons[i][j].config(bg="#ccccff", fg="#0000cc")
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible d'envoyer le coup : {e}")
 
