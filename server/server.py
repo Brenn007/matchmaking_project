@@ -49,16 +49,20 @@ def send_game_state(match):
         'winner': match['winner']
     }
     
-    message = json.dumps(state)
-    try:
-        match['player1_conn'].sendall(message.encode() + b'\n')
-    except:
-        print("[!] Impossible d'envoyer à player1")
+    message = json.dumps(state) + '\n'  # Ajouter \n important!
+    print(f"[DEBUG] Envoi de l'état: {state}")
     
     try:
-        match['player2_conn'].sendall(message.encode() + b'\n')
-    except:
-        print("[!] Impossible d'envoyer à player2")
+        match['player1_conn'].sendall(message.encode())
+        print("[DEBUG] État envoyé au joueur 1")
+    except Exception as e:
+        print(f"[!] Impossible d'envoyer à player1: {e}")
+    
+    try:
+        match['player2_conn'].sendall(message.encode())
+        print("[DEBUG] État envoyé au joueur 2")
+    except Exception as e:
+        print(f"[!] Impossible d'envoyer à player2: {e}")
 
 def handle_client(conn, addr):
     global queue
@@ -162,6 +166,7 @@ def handle_move(match_id, player_number, move):
     """Gère un coup joué par un joueur"""
     try:
         i, j = int(move[0]), int(move[1])
+        print(f"[DEBUG] handle_move appelé: match_id={match_id}, player={player_number}, move=({i},{j})")
         
         with lock:
             match = matches.get(match_id)
@@ -173,6 +178,7 @@ def handle_move(match_id, player_number, move):
             if match['current_turn'] != player_number:
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
                 player_conn.sendall(b"Ce n'est pas votre tour!\n")
+                print(f"[!] Joueur {player_number} a essayé de jouer mais ce n'est pas son tour")
                 return
             
             # Vérifier si la partie est finie
@@ -188,11 +194,13 @@ def handle_move(match_id, player_number, move):
             if board[index] != ' ':
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
                 player_conn.sendall(b"Case deja occupee!\n")
+                print(f"[!] Case ({i},{j}) déjà occupée")
                 return
             
             # Jouer le coup
             board[index] = 'X' if player_number == 1 else 'O'
             match['board'] = ''.join(board)
+            print(f"[+] Coup joué avec succès. Nouveau plateau: {match['board']}")
             
             # Vérifier si la partie est terminée
             is_over, winner = check_game_end(match['board'])
@@ -204,12 +212,15 @@ def handle_move(match_id, player_number, move):
                 match['current_turn'] = 2 if player_number == 1 else 1
             
             # Envoyer l'état du jeu mis à jour aux deux joueurs
+            print(f"[DEBUG] Envoi de l'état mis à jour aux deux joueurs")
             send_game_state(match)
             
-            print(f"[+] Coup joué: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
+            print(f"[+] Coup traité: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
             
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
+        import traceback
+        traceback.print_exc()
 
 def notify_players_match_found(match_id, match):
     """Notifie les deux joueurs qu'un match a été trouvé"""
