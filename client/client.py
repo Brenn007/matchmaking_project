@@ -80,9 +80,11 @@ class MatchmakingClient(tk.Tk):
                 while '\n' in buffer:
                     line, buffer = buffer.split('\n', 1)
                     if line.strip():
+                        print(f"[DEBUG Client] Message reçu: {line.strip()}")  # Debug
                         self.process_server_message(line.strip())
                         
         except Exception as e:
+            print(f"[DEBUG Client] Erreur de connexion: {e}")  # Debug
             self.after(0, lambda: messagebox.showerror("Erreur", f"Connexion perdue : {e}"))
             self.socket = None
         finally:
@@ -109,7 +111,13 @@ class MatchmakingClient(tk.Tk):
                 
         except json.JSONDecodeError:
             # Message non-JSON (ancien format)
-            self.after(0, lambda: self.status_label.config(text=message))
+            if "Votre adversaire s'est deconnecte" in message:
+                self.after(0, lambda: messagebox.showinfo("Adversaire déconnecté", 
+                    "Votre adversaire s'est déconnecté. Retour au menu principal."))
+                self.after(0, self.disconnect)
+                self.after(0, lambda: self.connect_button.config(state=tk.NORMAL))
+            else:
+                self.after(0, lambda: self.status_label.config(text=message))
 
     def create_game_board(self):
         """Crée le plateau de jeu"""
@@ -135,7 +143,7 @@ class MatchmakingClient(tk.Tk):
 
     def update_game_state(self, state):
         """Met à jour l'interface selon l'état du jeu reçu du serveur"""
-        if not self.game_started:
+        if not self.game_started or not self.board_buttons:
             return
         
         # Mettre à jour le plateau
@@ -143,15 +151,17 @@ class MatchmakingClient(tk.Tk):
         for i in range(3):
             for j in range(3):
                 symbol = board[i * 3 + j]
-                self.board_buttons[i][j]['text'] = symbol if symbol != ' ' else ' '
+                current_text = self.board_buttons[i][j]['text']
                 
-                # Colorer les cases selon le joueur
-                if symbol == 'X':
-                    self.board_buttons[i][j].config(bg="#ffcccc", fg="#cc0000")  # Rouge clair avec texte rouge foncé
-                elif symbol == 'O':
-                    self.board_buttons[i][j].config(bg="#ccccff", fg="#0000cc")  # Bleu clair avec texte bleu foncé
-                else:
-                    self.board_buttons[i][j].config(bg="white", fg="black")
+                # Mettre à jour seulement si le contenu a changé
+                if current_text != symbol:
+                    self.board_buttons[i][j]['text'] = symbol if symbol != ' ' else ' '
+                    
+                    # Colorer les cases selon le joueur
+                    if symbol == 'X':
+                        self.board_buttons[i][j].config(bg="#ffcccc", fg="#cc0000")
+                    elif symbol == 'O':
+                        self.board_buttons[i][j].config(bg="#ccccff", fg="#0000cc")
         
         # Mettre à jour le statut du tour
         self.is_my_turn = (state['current_turn'] == self.player_number and not state['is_finished'])
@@ -174,11 +184,13 @@ class MatchmakingClient(tk.Tk):
             # Partie en cours
             if self.is_my_turn:
                 self.turn_label.config(text="C'est votre tour!", fg="green")
-                # Activer les boutons
+                # Activer les boutons vides
                 for row in self.board_buttons:
                     for button in row:
                         if button['text'] == ' ':
                             button.config(state=tk.NORMAL)
+                        else:
+                            button.config(state=tk.DISABLED)
             else:
                 self.turn_label.config(text="Tour de l'adversaire...", fg="red")
                 # Désactiver tous les boutons
@@ -199,6 +211,7 @@ class MatchmakingClient(tk.Tk):
         # Envoyer le coup au serveur
         move_message = f"MOVE:{i}{j}"
         try:
+            print(f"[DEBUG Client] Envoi du coup: {move_message}")  # Debug
             self.socket.sendall(move_message.encode())
             # Désactiver temporairement tous les boutons
             for row in self.board_buttons:
@@ -211,7 +224,11 @@ class MatchmakingClient(tk.Tk):
         """Demande si le joueur veut faire une nouvelle partie"""
         response = messagebox.askyesno("Nouvelle partie", "Voulez-vous faire une nouvelle partie?")
         if response:
-            self.reset_game()
+            # Se déconnecter et se reconnecter proprement
+            self.disconnect()
+            self.connect_button.config(state=tk.NORMAL)
+            # Reconnecter automatiquement
+            self.after(500, self.connect_to_server)
         else:
             self.quit()
 
@@ -259,6 +276,16 @@ class MatchmakingClient(tk.Tk):
         
         if self.board_frame:
             self.board_frame.destroy()
+            self.board_frame = None
+        
+        # Réinitialiser toutes les variables
+        self.board_buttons = []
+        self.match_id = None
+        self.player_number = None
+        self.my_symbol = None
+        self.opponent_symbol = None
+        self.is_my_turn = False
+        self.game_started = False
 
     def on_closing(self):
         """Appelé quand la fenêtre est fermée"""
