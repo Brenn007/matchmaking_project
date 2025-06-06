@@ -65,8 +65,10 @@ def handle_client(conn, addr):
     print(f"[+] Connexion de {addr}")
     player_match_id = None
     player_number = None
+    pseudo = None
     
     try:
+        # Recevoir le pseudo initial
         pseudo = conn.recv(1024).decode()
         print(f"[DEBUG] Message brut reçu : {pseudo}")
 
@@ -77,29 +79,14 @@ def handle_client(conn, addr):
 
         print(f"[+] Pseudo reçu : {pseudo}")
 
+        # Ajouter à la file d'attente
         with lock:
             queue.append((addr[0], addr[1], pseudo, conn))
             print(f"[DEBUG] File d'attente actuelle : {len(queue)} joueur(s)")
 
         conn.sendall(b"En attente d'un adversaire...\n")
 
-        # Attendre d'être assigné à un match
-        while player_match_id is None:
-            with lock:
-                for match_id, match in matches.items():
-                    if match['player1_conn'] == conn:
-                        player_match_id = match_id
-                        player_number = 1
-                        break
-                    elif match['player2_conn'] == conn:
-                        player_match_id = match_id
-                        player_number = 2
-                        break
-            time.sleep(0.1)
-
-        print(f"[DEBUG] Joueur {pseudo} assigné au match {player_match_id} comme joueur {player_number}")
-
-        # Boucle principale du jeu
+        # Boucle principale
         while True:
             try:
                 data = conn.recv(1024).decode()
@@ -109,10 +96,43 @@ def handle_client(conn, addr):
                 
                 print(f"[DEBUG] Données reçues de {pseudo}: {data}")
                 
-                # Traiter le coup
+                # Vérifier si c'est un coup ou un nouveau pseudo (réinscription)
                 if data.startswith("MOVE:"):
-                    move_data = data[5:].strip()
-                    handle_move(player_match_id, player_number, move_data)
+                    if player_match_id:
+                        move_data = data[5:].strip()
+                        handle_move(player_match_id, player_number, move_data)
+                else:
+                    # C'est probablement un nouveau pseudo pour rejouer
+                    if player_match_id and player_match_id in matches:
+                        # Nettoyer l'ancien match si encore présent
+                        with lock:
+                            if player_match_id in matches:
+                                del matches[player_match_id]
+                    
+                    # Réinitialiser les variables du joueur
+                    player_match_id = None
+                    player_number = None
+                    pseudo = data.strip()
+                    
+                    # Réinscrire dans la queue
+                    with lock:
+                        queue.append((addr[0], addr[1], pseudo, conn))
+                        print(f"[+] {pseudo} réinscrit dans la file d'attente")
+                    
+                    conn.sendall(b"En attente d'un adversaire...\n")
+                
+                # Vérifier si le joueur a été assigné à un nouveau match
+                if not player_match_id:
+                    with lock:
+                        for match_id, match in matches.items():
+                            if match['player1_conn'] == conn:
+                                player_match_id = match_id
+                                player_number = 1
+                                break
+                            elif match['player2_conn'] == conn:
+                                player_match_id = match_id
+                                player_number = 2
+                                break
                 
             except Exception as e:
                 print(f"[!] Erreur lors du traitement des données de {addr} : {e}")

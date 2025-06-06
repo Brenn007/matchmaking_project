@@ -109,7 +109,13 @@ class MatchmakingClient(tk.Tk):
                 
         except json.JSONDecodeError:
             # Message non-JSON (ancien format)
-            self.after(0, lambda: self.status_label.config(text=message))
+            if "Votre adversaire s'est deconnecte" in message:
+                self.after(0, lambda: messagebox.showinfo("Adversaire déconnecté", 
+                    "Votre adversaire s'est déconnecté. Retour au menu principal."))
+                self.after(0, self.disconnect)
+                self.after(0, lambda: self.connect_button.config(state=tk.NORMAL))
+            else:
+                self.after(0, lambda: self.status_label.config(text=message))
 
     def create_game_board(self):
         """Crée le plateau de jeu"""
@@ -211,7 +217,11 @@ class MatchmakingClient(tk.Tk):
         """Demande si le joueur veut faire une nouvelle partie"""
         response = messagebox.askyesno("Nouvelle partie", "Voulez-vous faire une nouvelle partie?")
         if response:
-            self.reset_game()
+            # Se déconnecter et se reconnecter proprement
+            self.disconnect()
+            self.connect_button.config(state=tk.NORMAL)
+            # Reconnecter automatiquement
+            self.after(500, self.connect_to_server)
         else:
             self.quit()
 
@@ -231,7 +241,18 @@ class MatchmakingClient(tk.Tk):
         self.turn_label.config(text="")
         self.status_label.config(text="En attente d'un adversaire...")
         
-        # Note: Le serveur devrait gérer la réinscription dans la queue
+        # Renvoyer le pseudo au serveur pour se réinscrire dans la queue
+        if self.socket:
+            try:
+                pseudo = self.pseudo_entry.get().strip()
+                if pseudo:
+                    self.socket.sendall(pseudo.encode())
+                    print(f"[DEBUG] Réinscription avec le pseudo: {pseudo}")
+            except Exception as e:
+                print(f"[!] Erreur lors de la réinscription: {e}")
+                # Si erreur, se reconnecter complètement
+                self.disconnect()
+                self.connect_to_server()
 
     def disconnect(self):
         """Déconnecte le client proprement"""
@@ -242,12 +263,21 @@ class MatchmakingClient(tk.Tk):
                 pass
             self.socket = None
         
-        self.connect_button.config(state=tk.NORMAL)
         self.status_label.config(text="Déconnecté du serveur")
         self.turn_label.config(text="")
         
         if self.board_frame:
             self.board_frame.destroy()
+            self.board_frame = None
+        
+        # Réinitialiser toutes les variables
+        self.board_buttons = []
+        self.match_id = None
+        self.player_number = None
+        self.my_symbol = None
+        self.opponent_symbol = None
+        self.is_my_turn = False
+        self.game_started = False
 
     def on_closing(self):
         """Appelé quand la fenêtre est fermée"""
