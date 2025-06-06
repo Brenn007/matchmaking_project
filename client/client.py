@@ -68,8 +68,12 @@ class MatchmakingClient(tk.Tk):
     def listen_to_server(self):
         """Thread qui écoute les messages du serveur"""
         buffer = ""
+        error_message = None
         try:
             while True:
+                if not self.socket:
+                    break
+                    
                 data = self.socket.recv(1024).decode()
                 if not data:
                     break
@@ -84,8 +88,10 @@ class MatchmakingClient(tk.Tk):
                         self.process_server_message(line.strip())
                         
         except Exception as e:
-            print(f"[DEBUG Client] Erreur de connexion: {e}")  # Debug
-            self.after(0, lambda: messagebox.showerror("Erreur", f"Connexion perdue : {e}"))
+            error_message = str(e)
+            print(f"[DEBUG Client] Erreur de connexion: {error_message}")  # Debug
+            if self.socket:  # Seulement afficher l'erreur si on était connecté
+                self.after(0, lambda msg=error_message: messagebox.showerror("Erreur", f"Connexion perdue : {msg}"))
             self.socket = None
         finally:
             self.after(0, self.disconnect)
@@ -107,6 +113,7 @@ class MatchmakingClient(tk.Tk):
                 self.after(0, self.create_game_board)
                 
             elif data['type'] == 'game_state':
+                print(f"[DEBUG Client] État du jeu reçu: board='{data['board']}', turn={data['current_turn']}")
                 self.after(0, lambda: self.update_game_state(data))
                 
         except json.JSONDecodeError:
@@ -114,8 +121,15 @@ class MatchmakingClient(tk.Tk):
             if "Votre adversaire s'est deconnecte" in message:
                 self.after(0, lambda: messagebox.showinfo("Adversaire déconnecté", 
                     "Votre adversaire s'est déconnecté. Retour au menu principal."))
-                self.after(0, self.disconnect)
-                self.after(0, lambda: self.connect_button.config(state=tk.NORMAL))
+                # Fermer la socket pour éviter d'autres erreurs
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
+                    self.socket = None
+                self.after(100, self.disconnect)
+                self.after(200, lambda: self.connect_button.config(state=tk.NORMAL))
             else:
                 self.after(0, lambda: self.status_label.config(text=message))
 
