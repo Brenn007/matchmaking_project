@@ -113,17 +113,24 @@ class MatchmakingClient(tk.Tk):
             data = json.loads(message)
             
             if data['type'] == 'match_found':
+                # Nouveau match trouvé - réinitialiser complètement
                 self.match_id = data['match_id']
                 self.player_number = data['player_number']
                 self.my_symbol = 'X' if self.player_number == 1 else 'O'
                 self.opponent_symbol = 'O' if self.player_number == 1 else 'X'
+                self.is_my_turn = False
+                self.game_started = False
+                
+                print(f"[DEBUG] Nouveau match: ID={self.match_id}, Player={self.player_number}")
                 
                 self.after(0, lambda: self.status_label.config(
                     text=f"Match trouvé! Vous êtes le joueur {self.player_number} ({self.my_symbol})"))
                 self.after(0, self.create_game_board)
                 
             elif data['type'] == 'game_state':
-                self.after(0, lambda: self.update_game_state(data))
+                # Vérifier que c'est bien pour notre match actuel
+                if self.game_started:
+                    self.after(0, lambda: self.update_game_state(data))
                 
             elif data['type'] == 'new_game_accepted':
                 self.after(0, lambda: self.status_label.config(text=data['message']))
@@ -133,7 +140,9 @@ class MatchmakingClient(tk.Tk):
                 self.after(0, self.show_game_controls)
                 
             elif data['type'] == 'error':
-                self.after(0, lambda: messagebox.showwarning("Erreur", data['message']))
+                # Ignorer les erreurs "partie terminée" car elles peuvent venir de l'ancien match
+                if "terminée" not in data['message']:
+                    self.after(0, lambda: messagebox.showwarning("Erreur", data['message']))
                 
         except json.JSONDecodeError:
             # Message non-JSON (ancien format)
@@ -141,16 +150,20 @@ class MatchmakingClient(tk.Tk):
 
     def create_game_board(self):
         """Crée le plateau de jeu"""
+        # Détruire l'ancien plateau s'il existe
         if self.board_frame:
             self.board_frame.destroy()
         
         # Cacher les boutons de contrôle
         self.hide_game_controls()
         
+        # Réinitialiser les variables de jeu
+        self.board_buttons = []
+        self.is_my_turn = False
+        
         self.board_frame = tk.Frame(self, bg="#f0f0f0", relief=tk.RAISED, bd=2)
         self.board_frame.pack(pady=10)
         
-        self.board_buttons = []
         for i in range(3):
             row = []
             for j in range(3):
@@ -163,6 +176,7 @@ class MatchmakingClient(tk.Tk):
             self.board_buttons.append(row)
         
         self.game_started = True
+        print(f"[DEBUG] Plateau de jeu créé pour le match {self.match_id}")
 
     def update_game_state(self, state):
         """Met à jour l'interface selon l'état du jeu reçu du serveur"""

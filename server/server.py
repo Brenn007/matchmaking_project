@@ -85,59 +85,54 @@ def handle_client(conn, addr):
 
         conn.sendall(b"En attente d'un adversaire...\n")
 
-        # Attendre d'être assigné à un match
-        while player_match_id is None:
-            with lock:
-                for match_id, match in matches.items():
-                    if match['player1_conn'] == conn:
-                        player_match_id = match_id
-                        player_number = 1
-                        break
-                    elif match['player2_conn'] == conn:
-                        player_match_id = match_id
-                        player_number = 2
-                        break
-            time.sleep(0.1)
-
-        print(f"[DEBUG] Joueur {pseudo} assigné au match {player_match_id} comme joueur {player_number}")
-
-        # Boucle principale du jeu
+        # Boucle principale de gestion du client
         while True:
-            try:
-                data = conn.recv(1024).decode()
-                if not data:
-                    print(f"[!] Déconnexion de {addr}")
-                    break
-                
-                print(f"[DEBUG] Données reçues de {pseudo}: {data}")
-                
-                # Traiter les différents types de messages
-                if data.startswith("MOVE:"):
-                    move_data = data[5:].strip()
-                    handle_move(player_match_id, player_number, move_data)
-                elif data.startswith("NEW_GAME"):
-                    handle_new_game_request(conn, player_pseudo, addr)
-                    # Réinitialiser les variables pour le nouveau match
-                    player_match_id = None
-                    player_number = None
+            # Attendre d'être assigné à un match
+            while player_match_id is None:
+                with lock:
+                    for match_id, match in matches.items():
+                        if match['player1_conn'] == conn:
+                            player_match_id = match_id
+                            player_number = 1
+                            break
+                        elif match['player2_conn'] == conn:
+                            player_match_id = match_id
+                            player_number = 2
+                            break
+                time.sleep(0.1)
+
+            print(f"[DEBUG] Joueur {pseudo} assigné au match {player_match_id} comme joueur {player_number}")
+
+            # Boucle de jeu pour ce match
+            while player_match_id is not None:
+                try:
+                    data = conn.recv(1024).decode()
+                    if not data:
+                        print(f"[!] Déconnexion de {addr}")
+                        return
                     
-                    # Attendre d'être assigné à un nouveau match
-                    while player_match_id is None:
+                    print(f"[DEBUG] Données reçues de {pseudo}: {data}")
+                    
+                    # Traiter les différents types de messages
+                    if data.startswith("MOVE:"):
+                        move_data = data[5:].strip()
+                        handle_move(player_match_id, player_number, move_data)
+                    elif data.startswith("NEW_GAME"):
+                        # Nettoyer l'ancien match s'il existe
                         with lock:
-                            for match_id, match in matches.items():
-                                if match['player1_conn'] == conn:
-                                    player_match_id = match_id
-                                    player_number = 1
-                                    break
-                                elif match['player2_conn'] == conn:
-                                    player_match_id = match_id
-                                    player_number = 2
-                                    break
-                        time.sleep(0.1)
-                
-            except Exception as e:
-                print(f"[!] Erreur lors du traitement des données de {addr} : {e}")
-                break
+                            if player_match_id in matches:
+                                print(f"[DEBUG] Nettoyage de l'ancien match {player_match_id} pour {pseudo}")
+                                del matches[player_match_id]
+                        
+                        handle_new_game_request(conn, player_pseudo, addr)
+                        # Réinitialiser les variables pour le nouveau match
+                        player_match_id = None
+                        player_number = None
+                        break  # Sortir de la boucle de jeu pour attendre un nouveau match
+                    
+                except Exception as e:
+                    print(f"[!] Erreur lors du traitement des données de {addr} : {e}")
+                    break
                 
     except Exception as e:
         print(f"[!] Erreur avec {addr} : {e}")
@@ -206,13 +201,8 @@ def handle_move(match_id, player_number, move):
             
             # Vérifier si la partie est finie
             if match['is_finished']:
-                player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
-                error_message = json.dumps({
-                    'type': 'error',
-                    'message': 'La partie est terminée!'
-                })
-                player_conn.sendall(error_message.encode() + b'\n')
-                return
+                print(f"[!] Tentative de jouer sur un match terminé {match_id}")
+                return  # Ne pas envoyer d'erreur, juste ignorer
             
             board = list(match['board'])
             index = i * 3 + j
@@ -244,10 +234,6 @@ def handle_move(match_id, player_number, move):
             send_game_state(match)
             
             print(f"[+] Coup joué: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
-            
-            # Si la partie est terminée, programmer le nettoyage du match après un délai
-            if is_over:
-                threading.Timer(30.0, cleanup_finished_match, args=[match_id]).start()
             
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
