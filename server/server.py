@@ -189,8 +189,16 @@ def handle_move(match_id, player_number, move):
                 print(f"[!] Match {match_id} introuvable")
                 return
             
+            print(f"[DEBUG] Move reçu: Match {match_id}, Joueur {player_number}, Tour actuel: {match['current_turn']}")
+            
+            # Vérifier si la partie est finie
+            if match['is_finished']:
+                print(f"[!] Tentative de jouer sur un match terminé {match_id}")
+                return  # Ne pas envoyer d'erreur, juste ignorer
+            
             # Vérifier si c'est le tour du joueur
             if match['current_turn'] != player_number:
+                print(f"[!] Mauvais tour: attendu {match['current_turn']}, reçu {player_number}")
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
                 error_message = json.dumps({
                     'type': 'error',
@@ -199,16 +207,12 @@ def handle_move(match_id, player_number, move):
                 player_conn.sendall(error_message.encode() + b'\n')
                 return
             
-            # Vérifier si la partie est finie
-            if match['is_finished']:
-                print(f"[!] Tentative de jouer sur un match terminé {match_id}")
-                return  # Ne pas envoyer d'erreur, juste ignorer
-            
             board = list(match['board'])
             index = i * 3 + j
             
             # Vérifier si la case est vide
             if board[index] != ' ':
+                print(f"[!] Case {i},{j} déjà occupée")
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
                 error_message = json.dumps({
                     'type': 'error',
@@ -226,9 +230,12 @@ def handle_move(match_id, player_number, move):
             match['is_finished'] = is_over
             match['winner'] = winner
             
-            # Changer de tour
+            # Changer de tour seulement si la partie n'est pas terminée
             if not is_over:
                 match['current_turn'] = 2 if player_number == 1 else 1
+                print(f"[DEBUG] Tour changé vers joueur {match['current_turn']}")
+            else:
+                print(f"[DEBUG] Partie terminée, gagnant: {winner}")
             
             # Envoyer l'état du jeu mis à jour aux deux joueurs
             send_game_state(match)
@@ -237,6 +244,8 @@ def handle_move(match_id, player_number, move):
             
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
+        import traceback
+        traceback.print_exc()
 
 def cleanup_finished_match(match_id):
     """Nettoie un match terminé après un délai"""

@@ -340,6 +340,7 @@ class MatchmakingClient(tk.Tk):
 
     def process_server_message(self, message):
         """Traite les messages reçus du serveur"""
+        print(f"[DEBUG] Message serveur reçu: {message}")
         try:
             # Essayer de parser comme JSON
             data = json.loads(message)
@@ -353,7 +354,7 @@ class MatchmakingClient(tk.Tk):
                 self.is_my_turn = False
                 self.game_started = False
                 
-                print(f"[DEBUG] Nouveau match: ID={self.match_id}, Player={self.player_number}")
+                print(f"[DEBUG] Nouveau match: ID={self.match_id}, Player={self.player_number}, Symbol={self.my_symbol}")
                 
                 self.after(0, lambda: self.status_label.config(
                     text=f"⚔️ Match trouvé! Vous jouez avec les {self.my_symbol} (Joueur {self.player_number})",
@@ -363,6 +364,7 @@ class MatchmakingClient(tk.Tk):
             elif data['type'] == 'game_state':
                 # Vérifier que c'est bien pour notre match actuel
                 if self.game_started:
+                    print(f"[DEBUG] État de jeu: tour={data.get('current_turn')}, fini={data.get('is_finished')}")
                     self.after(0, lambda: self.update_game_state(data))
                 
             elif data['type'] == 'new_game_accepted':
@@ -373,9 +375,9 @@ class MatchmakingClient(tk.Tk):
                 self.after(0, self.show_game_controls)
                 
             elif data['type'] == 'error':
-                # Ignorer les erreurs "partie terminée" car elles peuvent venir de l'ancien match
-                if "terminée" not in data['message']:
-                    self.after(0, lambda: messagebox.showwarning("Erreur", data['message']))
+                # Afficher toutes les erreurs pour le debug
+                print(f"[DEBUG] Erreur du serveur: {data['message']}")
+                self.after(0, lambda: messagebox.showwarning("Erreur serveur", data['message']))
                 
         except json.JSONDecodeError:
             # Message non-JSON (ancien format)
@@ -481,25 +483,25 @@ class MatchmakingClient(tk.Tk):
         if not self._fullscreen_state:
             self.state('zoomed')  # Maximiser si pas en plein écran
         
-            # Forcer la mise à jour des tailles après changement de mode
-            self.after(100, self.update_ui_sizes)
-            
-        def update_game_state(self, state):
-            """Met à jour le plateau de jeu selon l'état reçu du serveur"""
-            # Mettre à jour le plateau
-            for i in range(3):
-                for j in range(3):
-                    symbol = state['board'][i][j]
-                    button = self.board_buttons[i][j]
-                    button.config(text=symbol)
-                    
-                    # Styliser selon le symbole
-                    if symbol == 'X':
-                        button.config(bg="#e74c3c", fg="#ffffff", font=("Arial", 32, "bold"))  # Rouge moderne
-                    elif symbol == 'O':
-                        button.config(bg="#3498db", fg="#ffffff", font=("Arial", 32, "bold"))  # Bleu moderne
-                    else:
-                        button.config(bg="#2d3561", fg="#ffffff", font=("Arial", 32, "bold"))
+        # Forcer la mise à jour des tailles après changement de mode
+        self.after(100, self.update_ui_sizes)
+        
+    def update_game_state(self, state):
+        """Met à jour l'état du jeu"""
+        # Mettre à jour le plateau
+        for i in range(3):
+            for j in range(3):
+                symbol = state['board'][i][j]
+                button = self.board_buttons[i][j]
+                button.config(text=symbol)
+                
+                # Style différent selon le symbole
+                if symbol == 'X':
+                    button.config(bg="#e74c3c", fg="#ffffff", font=("Arial", 32, "bold"))  # Rouge moderne
+                elif symbol == 'O':
+                    button.config(bg="#3498db", fg="#ffffff", font=("Arial", 32, "bold"))  # Bleu moderne
+                else:
+                    button.config(bg="#2d3561", fg="#ffffff", font=("Arial", 32, "bold"))
         
         # Mettre à jour le statut du tour
         self.is_my_turn = (state['current_turn'] == self.player_number and not state['is_finished'])
@@ -557,8 +559,14 @@ class MatchmakingClient(tk.Tk):
 
     def make_move(self, i, j):
         """Envoie un coup au serveur"""
+        print(f"[DEBUG] Tentative de coup: ({i},{j}), Mon tour: {self.is_my_turn}, Match ID: {self.match_id}")
+        
         if not self.is_my_turn:
             messagebox.showwarning("Pas votre tour", "Attendez votre tour!")
+            return
+        
+        if not self.match_id:
+            messagebox.showerror("Erreur", "Aucun match en cours!")
             return
         
         if self.board_buttons[i][j]['text'] != ' ':
@@ -572,12 +580,14 @@ class MatchmakingClient(tk.Tk):
         move_message = f"MOVE:{i}{j}"
         try:
             self.socket.sendall(move_message.encode())
+            print(f"[DEBUG] Coup envoyé: {move_message}")
             # Désactiver temporairement tous les boutons
             for row in self.board_buttons:
                 for button in row:
                     button.config(state=tk.DISABLED, cursor="")
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible d'envoyer le coup : {e}")
+            print(f"[ERROR] Erreur envoi coup: {e}")
 
     def request_new_game(self):
         """Demande une nouvelle partie au serveur"""
