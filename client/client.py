@@ -125,6 +125,16 @@ class MatchmakingClient(tk.Tk):
             elif data['type'] == 'game_state':
                 self.after(0, lambda: self.update_game_state(data))
                 
+            elif data['type'] == 'new_game_accepted':
+                self.after(0, lambda: self.status_label.config(text=data['message']))
+                
+            elif data['type'] == 'opponent_disconnected':
+                self.after(0, lambda: messagebox.showinfo("Déconnexion", data['message']))
+                self.after(0, self.show_game_controls)
+                
+            elif data['type'] == 'error':
+                self.after(0, lambda: messagebox.showwarning("Erreur", data['message']))
+                
         except json.JSONDecodeError:
             # Message non-JSON (ancien format)
             self.after(0, lambda: self.status_label.config(text=message))
@@ -243,18 +253,18 @@ class MatchmakingClient(tk.Tk):
 
     def request_new_game(self):
         """Demande une nouvelle partie au serveur"""
-        self.reset_game_ui()
-        self.status_label.config(text="En attente d'un adversaire...")
-        
-        # Ici, vous pourriez envoyer un message au serveur pour demander une nouvelle partie
-        # Pour l'instant, on réinitialise juste l'interface
-        # Le serveur devrait gérer la réinscription dans la queue automatiquement
-        
-        # Note: Si le serveur supporte un message de nouvelle partie, l'envoyer ici :
-        # try:
-        #     self.socket.sendall(b"NEW_GAME")
-        # except Exception as e:
-        #     messagebox.showerror("Erreur", f"Impossible de demander une nouvelle partie : {e}")
+        try:
+            # Envoyer la demande de nouvelle partie au serveur
+            self.socket.sendall(b"NEW_GAME")
+            print("[DEBUG] Demande de nouvelle partie envoyée au serveur")
+            
+            # Réinitialiser l'interface
+            self.reset_game_ui()
+            self.status_label.config(text="Demande de nouvelle partie envoyée...")
+            
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de demander une nouvelle partie : {e}")
+            print(f"[ERROR] Erreur lors de la demande de nouvelle partie: {e}")
 
     def reset_game_ui(self):
         """Réinitialise l'interface utilisateur pour une nouvelle partie"""

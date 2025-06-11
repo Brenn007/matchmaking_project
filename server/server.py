@@ -65,6 +65,7 @@ def handle_client(conn, addr):
     print(f"[+] Connexion de {addr}")
     player_match_id = None
     player_number = None
+    player_pseudo = None
     
     try:
         pseudo = conn.recv(1024).decode()
@@ -76,6 +77,7 @@ def handle_client(conn, addr):
             return
 
         print(f"[+] Pseudo reçu : {pseudo}")
+        player_pseudo = pseudo
 
         with lock:
             queue.append((addr[0], addr[1], pseudo, conn))
@@ -109,10 +111,29 @@ def handle_client(conn, addr):
                 
                 print(f"[DEBUG] Données reçues de {pseudo}: {data}")
                 
-                # Traiter le coup
+                # Traiter les différents types de messages
                 if data.startswith("MOVE:"):
                     move_data = data[5:].strip()
                     handle_move(player_match_id, player_number, move_data)
+                elif data.startswith("NEW_GAME"):
+                    handle_new_game_request(conn, player_pseudo, addr)
+                    # Réinitialiser les variables pour le nouveau match
+                    player_match_id = None
+                    player_number = None
+                    
+                    # Attendre d'être assigné à un nouveau match
+                    while player_match_id is None:
+                        with lock:
+                            for match_id, match in matches.items():
+                                if match['player1_conn'] == conn:
+                                    player_match_id = match_id
+                                    player_number = 1
+                                    break
+                                elif match['player2_conn'] == conn:
+                                    player_match_id = match_id
+                                    player_number = 2
+                                    break
+                        time.sleep(0.1)
                 
             except Exception as e:
                 print(f"[!] Erreur lors du traitement des données de {addr} : {e}")
@@ -131,12 +152,36 @@ def handle_client(conn, addr):
                 match = matches[player_match_id]
                 other_conn = match['player2_conn'] if player_number == 1 else match['player1_conn']
                 try:
-                    other_conn.sendall(b"Votre adversaire s'est deconnecte\n")
+                    disconnect_message = json.dumps({
+                        'type': 'opponent_disconnected',
+                        'message': 'Votre adversaire s\'est déconnecté'
+                    })
+                    other_conn.sendall(disconnect_message.encode() + b'\n')
                 except:
                     pass
                 del matches[player_match_id]
         
         conn.close()
+
+def handle_new_game_request(conn, pseudo, addr):
+    """Gère une demande de nouvelle partie"""
+    try:
+        print(f"[+] {pseudo} demande une nouvelle partie")
+        
+        with lock:
+            # Ajouter le joueur à la file d'attente pour une nouvelle partie
+            queue.append((addr[0], addr[1], pseudo, conn))
+            print(f"[DEBUG] {pseudo} ajouté à la file d'attente pour une nouvelle partie")
+        
+        # Confirmer que la demande a été reçue
+        response = json.dumps({
+            'type': 'new_game_accepted',
+            'message': 'En attente d\'un adversaire...'
+        })
+        conn.sendall(response.encode() + b'\n')
+        
+    except Exception as e:
+        print(f"[!] Erreur lors de la gestion de nouvelle partie pour {pseudo}: {e}")
 
 def handle_move(match_id, player_number, move):
     """Gère un coup joué par un joueur"""
@@ -152,13 +197,21 @@ def handle_move(match_id, player_number, move):
             # Vérifier si c'est le tour du joueur
             if match['current_turn'] != player_number:
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
-                player_conn.sendall(b"Ce n'est pas votre tour!\n")
+                error_message = json.dumps({
+                    'type': 'error',
+                    'message': 'Ce n\'est pas votre tour!'
+                })
+                player_conn.sendall(error_message.encode() + b'\n')
                 return
             
             # Vérifier si la partie est finie
             if match['is_finished']:
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
-                player_conn.sendall(b"La partie est terminee!\n")
+                error_message = json.dumps({
+                    'type': 'error',
+                    'message': 'La partie est terminée!'
+                })
+                player_conn.sendall(error_message.encode() + b'\n')
                 return
             
             board = list(match['board'])
@@ -167,7 +220,11 @@ def handle_move(match_id, player_number, move):
             # Vérifier si la case est vide
             if board[index] != ' ':
                 player_conn = match['player1_conn'] if player_number == 1 else match['player2_conn']
-                player_conn.sendall(b"Case deja occupee!\n")
+                error_message = json.dumps({
+                    'type': 'error',
+                    'message': 'Case déjà occupée!'
+                })
+                player_conn.sendall(error_message.encode() + b'\n')
                 return
             
             # Jouer le coup
@@ -188,8 +245,19 @@ def handle_move(match_id, player_number, move):
             
             print(f"[+] Coup joué: Match {match_id}, Joueur {player_number}, Position ({i},{j})")
             
+            # Si la partie est terminée, programmer le nettoyage du match après un délai
+            if is_over:
+                threading.Timer(30.0, cleanup_finished_match, args=[match_id]).start()
+            
     except Exception as e:
         print(f"[!] Erreur dans handle_move : {e}")
+
+def cleanup_finished_match(match_id):
+    """Nettoie un match terminé après un délai"""
+    with lock:
+        if match_id in matches:
+            print(f"[+] Nettoyage du match terminé {match_id}")
+            del matches[match_id]
 
 def notify_players_match_found(match_id, match):
     """Notifie les deux joueurs qu'un match a été trouvé"""
@@ -199,7 +267,7 @@ def notify_players_match_found(match_id, match):
             'type': 'match_found',
             'match_id': match_id,
             'player_number': 1,
-            'opponent': 'Joueur 2'
+            'opponent': match['player2_pseudo']
         })
         match['player1_conn'].sendall(message1.encode() + b'\n')
         
@@ -208,7 +276,7 @@ def notify_players_match_found(match_id, match):
             'type': 'match_found',
             'match_id': match_id,
             'player_number': 2,
-            'opponent': 'Joueur 1'
+            'opponent': match['player1_pseudo']
         })
         match['player2_conn'].sendall(message2.encode() + b'\n')
         
@@ -270,17 +338,70 @@ class MyHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
+        self.send_header("refresh", "5")  # Auto-refresh toutes les 5 secondes
         self.end_headers()
         
         # Page d'état du serveur
         with lock:
+            # Détails des matchs
+            matches_html = ""
+            for match_id, match in matches.items():
+                status = "Terminé" if match['is_finished'] else "En cours"
+                winner_text = ""
+                if match['is_finished']:
+                    if match['winner'] == 0:
+                        winner_text = " (Match nul)"
+                    elif match['winner'] == 1:
+                        winner_text = f" (Gagnant: {match['player1_pseudo']})"
+                    elif match['winner'] == 2:
+                        winner_text = f" (Gagnant: {match['player2_pseudo']})"
+                
+                matches_html += f"""
+                <li>Match {match_id}: {match['player1_pseudo']} vs {match['player2_pseudo']} - {status}{winner_text}</li>
+                """
+            
+            # Joueurs en attente
+            queue_html = ""
+            for ip, port, pseudo, conn in queue:
+                queue_html += f"<li>{pseudo} ({ip}:{port})</li>"
+            
             html = f"""
             <html>
+            <head>
+                <title>Serveur TicTacToe - Monitoring</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    .stats {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
+                    .section {{ margin-bottom: 20px; }}
+                    ul {{ background-color: #f9f9f9; padding: 10px; border-radius: 3px; }}
+                </style>
+            </head>
             <body>
-                <h1>Serveur de Matchmaking TicTacToe</h1>
-                <p>Joueurs en attente: {len(queue)}</p>
-                <p>Matchs en cours: {len(matches)}</p>
-                <p>Total de matchs créés: {match_id_counter - 1}</p>
+                <h1>🎮 Serveur de Matchmaking TicTacToe</h1>
+                
+                <div class="stats">
+                    <h2>📊 Statistiques</h2>
+                    <p><strong>Joueurs en attente:</strong> {len(queue)}</p>
+                    <p><strong>Matchs en cours:</strong> {len([m for m in matches.values() if not m['is_finished']])}</p>
+                    <p><strong>Matchs terminés:</strong> {len([m for m in matches.values() if m['is_finished']])}</p>
+                    <p><strong>Total de matchs créés:</strong> {match_id_counter - 1}</p>
+                </div>
+                
+                <div class="section">
+                    <h2>⏳ Joueurs en attente</h2>
+                    <ul>
+                        {queue_html if queue_html else "<li>Aucun joueur en attente</li>"}
+                    </ul>
+                </div>
+                
+                <div class="section">
+                    <h2>🎯 Matchs</h2>
+                    <ul>
+                        {matches_html if matches_html else "<li>Aucun match en cours</li>"}
+                    </ul>
+                </div>
+                
+                <p><em>Page actualisée automatiquement toutes les 5 secondes</em></p>
             </body>
             </html>
             """
