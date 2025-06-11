@@ -11,7 +11,7 @@ class MatchmakingClient(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Client de Matchmaking TicTacToe")
-        self.geometry("300x400")
+        self.geometry("320x480")
         self.resizable(False, False)
         
         # Interface de connexion
@@ -42,6 +42,24 @@ class MatchmakingClient(tk.Tk):
         # Label pour afficher le tour actuel
         self.turn_label = tk.Label(self, text="", font=("Arial", 12, "bold"))
         self.turn_label.pack(pady=3)
+        
+        # Frame pour les contrôles de fin de partie
+        self.game_controls_frame = tk.Frame(self)
+        self.game_controls_frame.pack(pady=10)
+        
+        # Bouton rejouer (caché initialement)
+        self.replay_button = tk.Button(self.game_controls_frame, text="🔄 Rejouer", 
+                                     command=self.request_new_game,
+                                     bg="#2196F3", fg="white", font=("Arial", 11, "bold"), 
+                                     padx=20, pady=8)
+        # Le bouton n'est pas packed initialement
+        
+        # Bouton quitter (caché initialement)
+        self.quit_button = tk.Button(self.game_controls_frame, text="❌ Quitter", 
+                                   command=self.quit_game,
+                                   bg="#f44336", fg="white", font=("Arial", 11, "bold"), 
+                                   padx=20, pady=8)
+        # Le bouton n'est pas packed initialement
 
     def connect_to_server(self):
         pseudo = self.pseudo_entry.get().strip()
@@ -116,6 +134,9 @@ class MatchmakingClient(tk.Tk):
         if self.board_frame:
             self.board_frame.destroy()
         
+        # Cacher les boutons de contrôle
+        self.hide_game_controls()
+        
         self.board_frame = tk.Frame(self, bg="#f0f0f0", relief=tk.RAISED, bd=2)
         self.board_frame.pack(pady=10)
         
@@ -157,34 +178,47 @@ class MatchmakingClient(tk.Tk):
         self.is_my_turn = (state['current_turn'] == self.player_number and not state['is_finished'])
         
         if state['is_finished']:
-            # Partie terminée
+            # Partie terminée - Afficher le résultat et les boutons
             if state['winner'] == 0:
-                self.turn_label.config(text="Match nul!", fg="orange")
-                messagebox.showinfo("Fin de partie", "Match nul!")
+                self.turn_label.config(text="🤝 Match nul!", fg="orange", font=("Arial", 14, "bold"))
             elif state['winner'] == self.player_number:
-                self.turn_label.config(text="Vous avez gagné! 🎉", fg="green")
-                messagebox.showinfo("Victoire", "Félicitations, vous avez gagné!")
+                self.turn_label.config(text="🎉 Vous avez gagné!", fg="green", font=("Arial", 14, "bold"))
             else:
-                self.turn_label.config(text="Vous avez perdu...", fg="red")
-                messagebox.showinfo("Défaite", "Vous avez perdu. Réessayez!")
+                self.turn_label.config(text="😔 Vous avez perdu", fg="red", font=("Arial", 14, "bold"))
             
-            # Proposer une nouvelle partie
-            self.after(1000, self.ask_new_game)
+            # Désactiver tous les boutons du plateau
+            for row in self.board_buttons:
+                for button in row:
+                    button.config(state=tk.DISABLED)
+            
+            # Afficher les boutons de contrôle
+            self.show_game_controls()
+            
         else:
             # Partie en cours
             if self.is_my_turn:
-                self.turn_label.config(text="C'est votre tour!", fg="green")
+                self.turn_label.config(text="C'est votre tour!", fg="green", font=("Arial", 12, "bold"))
                 # Activer les boutons
                 for row in self.board_buttons:
                     for button in row:
                         if button['text'] == ' ':
                             button.config(state=tk.NORMAL)
             else:
-                self.turn_label.config(text="Tour de l'adversaire...", fg="red")
+                self.turn_label.config(text="Tour de l'adversaire...", fg="red", font=("Arial", 12, "bold"))
                 # Désactiver tous les boutons
                 for row in self.board_buttons:
                     for button in row:
                         button.config(state=tk.DISABLED)
+
+    def show_game_controls(self):
+        """Affiche les boutons Rejouer et Quitter"""
+        self.replay_button.pack(side=tk.LEFT, padx=10)
+        self.quit_button.pack(side=tk.LEFT, padx=10)
+
+    def hide_game_controls(self):
+        """Cache les boutons Rejouer et Quitter"""
+        self.replay_button.pack_forget()
+        self.quit_button.pack_forget()
 
     def make_move(self, i, j):
         """Envoie un coup au serveur"""
@@ -207,18 +241,28 @@ class MatchmakingClient(tk.Tk):
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible d'envoyer le coup : {e}")
 
-    def ask_new_game(self):
-        """Demande si le joueur veut faire une nouvelle partie"""
-        response = messagebox.askyesno("Nouvelle partie", "Voulez-vous faire une nouvelle partie?")
-        if response:
-            self.reset_game()
-        else:
-            self.quit()
+    def request_new_game(self):
+        """Demande une nouvelle partie au serveur"""
+        self.reset_game_ui()
+        self.status_label.config(text="En attente d'un adversaire...")
+        
+        # Ici, vous pourriez envoyer un message au serveur pour demander une nouvelle partie
+        # Pour l'instant, on réinitialise juste l'interface
+        # Le serveur devrait gérer la réinscription dans la queue automatiquement
+        
+        # Note: Si le serveur supporte un message de nouvelle partie, l'envoyer ici :
+        # try:
+        #     self.socket.sendall(b"NEW_GAME")
+        # except Exception as e:
+        #     messagebox.showerror("Erreur", f"Impossible de demander une nouvelle partie : {e}")
 
-    def reset_game(self):
-        """Réinitialise le jeu pour une nouvelle partie"""
+    def reset_game_ui(self):
+        """Réinitialise l'interface utilisateur pour une nouvelle partie"""
         if self.board_frame:
             self.board_frame.destroy()
+        
+        # Cacher les boutons de contrôle
+        self.hide_game_controls()
         
         self.board_buttons = []
         self.match_id = None
@@ -228,10 +272,11 @@ class MatchmakingClient(tk.Tk):
         self.is_my_turn = False
         self.game_started = False
         
-        self.turn_label.config(text="")
-        self.status_label.config(text="En attente d'un adversaire...")
-        
-        # Note: Le serveur devrait gérer la réinscription dans la queue
+        self.turn_label.config(text="", font=("Arial", 12, "bold"))
+
+    def quit_game(self):
+        """Quitte l'application"""
+        self.on_closing()
 
     def disconnect(self):
         """Déconnecte le client proprement"""
@@ -248,6 +293,9 @@ class MatchmakingClient(tk.Tk):
         
         if self.board_frame:
             self.board_frame.destroy()
+        
+        # Cacher les boutons de contrôle
+        self.hide_game_controls()
 
     def on_closing(self):
         """Appelé quand la fenêtre est fermée"""
