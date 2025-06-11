@@ -12,10 +12,15 @@ class MatchmakingClient(tk.Tk):
         super().__init__()
         self.title("🎮 TicTacToe Matchmaking")
         
-        # Configuration plein écran
+        # Configuration responsive
         self.state('zoomed')  # Windows
         # self.attributes('-zoomed', True)  # Linux alternative
         self.configure(bg='#1a1a2e')
+        
+        # Variables pour le responsive design
+        self.screen_width = self.winfo_screenwidth()
+        self.screen_height = self.winfo_screenheight()
+        self.is_small_screen = self.screen_width < 1366 or self.screen_height < 768
         
         # Variables de jeu
         self.socket = None
@@ -30,25 +35,28 @@ class MatchmakingClient(tk.Tk):
         
         self.setup_ui()
         
-        # Bind pour quitter en plein écran avec Escape
+        # Bind pour quitter en plein écran avec Escape et gérer le redimensionnement
         self.bind('<Escape>', self.toggle_fullscreen)
         self.bind('<F11>', self.toggle_fullscreen)
+        self.bind('<Configure>', self.on_window_resize)
 
     def setup_ui(self):
         """Configure l'interface utilisateur principale"""
+        sizes = self.get_responsive_sizes()
+        
         # Frame principal avec gradient simulé
         self.main_frame = tk.Frame(self, bg='#1a1a2e')
-        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=40, pady=40)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=sizes['main_padx'], pady=sizes['main_pady'])
         
         # Titre principal
         self.title_label = tk.Label(
             self.main_frame,
             text="🎮 TICTACTOE ONLINE",
-            font=("Arial Black", 48, "bold"),
+            font=sizes['title_font'],
             fg="#00d4aa",
             bg="#1a1a2e"
         )
-        self.title_label.pack(pady=(0, 30))
+        self.title_label.pack(pady=sizes['title_pady'])
         
         # Frame de connexion
         self.connection_frame = tk.Frame(self.main_frame, bg="#16213e", relief=tk.RAISED, bd=3)
@@ -58,16 +66,16 @@ class MatchmakingClient(tk.Tk):
         self.pseudo_label = tk.Label(
             self.connection_frame,
             text="✨ Entrez votre pseudo de joueur :",
-            font=("Arial", 18, "bold"),
+            font=sizes['pseudo_label_font'],
             fg="#ffffff",
             bg="#16213e"
         )
-        self.pseudo_label.pack(pady=(30, 10))
+        self.pseudo_label.pack(pady=(20, 10))
         
         # Entry pseudo avec style moderne
         self.pseudo_entry = tk.Entry(
             self.connection_frame,
-            font=("Arial", 16),
+            font=sizes['pseudo_font'],
             width=25,
             bg="#2d3561",
             fg="#ffffff",
@@ -83,15 +91,15 @@ class MatchmakingClient(tk.Tk):
             self.connection_frame,
             text="🚀 SE CONNECTER",
             command=self.connect_to_server,
-            font=("Arial", 14, "bold"),
+            font=sizes['connect_font'],
             bg="#00d4aa",
             fg="#1a1a2e",
             relief=tk.FLAT,
-            padx=30,
-            pady=12,
+            padx=sizes['control_padx'],
+            pady=sizes['control_pady'],
             cursor="hand2"
         )
-        self.connect_button.pack(pady=(10, 30))
+        self.connect_button.pack(pady=(10, 20))
         
         # Bind pour effet hover
         self.connect_button.bind("<Enter>", lambda e: self.connect_button.config(bg="#00ffcc"))
@@ -101,7 +109,7 @@ class MatchmakingClient(tk.Tk):
         self.status_label = tk.Label(
             self.main_frame,
             text="",
-            font=("Arial", 16),
+            font=sizes['status_font'],
             fg="#00d4aa",
             bg="#1a1a2e",
             wraplength=800
@@ -115,26 +123,26 @@ class MatchmakingClient(tk.Tk):
         self.turn_label = tk.Label(
             self.game_container,
             text="",
-            font=("Arial", 24, "bold"),
+            font=sizes['turn_font'],
             bg="#1a1a2e"
         )
-        self.turn_label.pack(pady=20)
+        self.turn_label.pack(pady=15)
         
         # Frame pour les contrôles de fin de partie
         self.game_controls_frame = tk.Frame(self.game_container, bg="#1a1a2e")
-        self.game_controls_frame.pack(pady=30)
+        self.game_controls_frame.pack(pady=20)
         
         # Boutons avec design moderne
         self.replay_button = tk.Button(
             self.game_controls_frame,
             text="🔄 REJOUER",
             command=self.request_new_game,
-            font=("Arial", 16, "bold"),
+            font=sizes['control_font'],
             bg="#4CAF50",
             fg="white",
             relief=tk.FLAT,
-            padx=30,
-            pady=15,
+            padx=sizes['control_padx'],
+            pady=sizes['control_pady'],
             cursor="hand2"
         )
         
@@ -142,12 +150,12 @@ class MatchmakingClient(tk.Tk):
             self.game_controls_frame,
             text="❌ QUITTER",
             command=self.quit_game,
-            font=("Arial", 16, "bold"),
+            font=sizes['control_font'],
             bg="#f44336",
             fg="white",
             relief=tk.FLAT,
-            padx=30,
-            pady=15,
+            padx=sizes['control_padx'],
+            pady=sizes['control_pady'],
             cursor="hand2"
         )
         
@@ -161,23 +169,126 @@ class MatchmakingClient(tk.Tk):
         self.instructions_label = tk.Label(
             self.main_frame,
             text="💡 Appuyez sur [Echap] ou [F11] pour basculer le mode plein écran",
-            font=("Arial", 12),
+            font=("Arial", 10 if sizes == self.get_responsive_sizes() and sizes['button_width'] < 7 else 12),
             fg="#666999",
             bg="#1a1a2e"
         )
         self.instructions_label.pack(side=tk.BOTTOM, pady=10)
 
-    def toggle_fullscreen(self, event=None):
-        """Bascule entre plein écran et fenêtré"""
-        current_state = self.attributes('-fullscreen') if hasattr(self, '_fullscreen_state') else False
-        if not hasattr(self, '_fullscreen_state'):
-            self._fullscreen_state = False
+    def get_responsive_sizes(self):
+        """Calcule les tailles en fonction de la résolution d'écran"""
+        # Détection de la taille d'écran actuelle
+        current_width = self.winfo_width() if self.winfo_width() > 1 else self.screen_width
+        current_height = self.winfo_height() if self.winfo_height() > 1 else self.screen_height
         
-        self._fullscreen_state = not self._fullscreen_state
-        self.attributes('-fullscreen', self._fullscreen_state)
+        # Définir les tailles selon la résolution
+        if current_width < 1366 or current_height < 768:
+            # Petits écrans (laptops, tablettes)
+            return {
+                'title_font': ("Arial Black", 28, "bold"),
+                'title_pady': (0, 15),
+                'main_padx': 20,
+                'main_pady': 20,
+                'status_font': ("Arial", 12),
+                'turn_font': ("Arial", 16, "bold"),
+                'turn_font_big': ("Arial", 20, "bold"),
+                'board_title_font': ("Arial", 14, "bold"),
+                'button_width': 6,
+                'button_height': 3,
+                'button_font': ("Arial", 20, "bold"),
+                'button_padx': 3,
+                'button_pady': 3,
+                'board_pady': 15,
+                'pseudo_font': ("Arial", 12),
+                'pseudo_label_font': ("Arial", 14, "bold"),
+                'connect_font': ("Arial", 12, "bold"),
+                'control_font': ("Arial", 12, "bold"),
+                'control_padx': 20,
+                'control_pady': 10
+            }
+        elif current_width < 1920 or current_height < 1080:
+            # Écrans moyens (1366x768 à 1920x1080)
+            return {
+                'title_font': ("Arial Black", 36, "bold"),
+                'title_pady': (0, 20),
+                'main_padx': 30,
+                'main_pady': 30,
+                'status_font': ("Arial", 14),
+                'turn_font': ("Arial", 20, "bold"),
+                'turn_font_big': ("Arial", 24, "bold"),
+                'board_title_font': ("Arial", 16, "bold"),
+                'button_width': 7,
+                'button_height': 3,
+                'button_font': ("Arial", 24, "bold"),
+                'button_padx': 4,
+                'button_pady': 4,
+                'board_pady': 20,
+                'pseudo_font': ("Arial", 14),
+                'pseudo_label_font': ("Arial", 16, "bold"),
+                'connect_font': ("Arial", 13, "bold"),
+                'control_font': ("Arial", 14, "bold"),
+                'control_padx': 25,
+                'control_pady': 12
+            }
+        else:
+            # Grands écrans (1920x1080+)
+            return {
+                'title_font': ("Arial Black", 48, "bold"),
+                'title_pady': (0, 30),
+                'main_padx': 40,
+                'main_pady': 40,
+                'status_font': ("Arial", 16),
+                'turn_font': ("Arial", 24, "bold"),
+                'turn_font_big': ("Arial", 28, "bold"),
+                'board_title_font': ("Arial", 20, "bold"),
+                'button_width': 8,
+                'button_height': 4,
+                'button_font': ("Arial", 28, "bold"),
+                'button_padx': 5,
+                'button_pady': 5,
+                'board_pady': 30,
+                'pseudo_font': ("Arial", 16),
+                'pseudo_label_font': ("Arial", 18, "bold"),
+                'connect_font': ("Arial", 14, "bold"),
+                'control_font': ("Arial", 16, "bold"),
+                'control_padx': 30,
+                'control_pady': 15
+            }
+
+    def on_window_resize(self, event=None):
+        """Appelé lors du redimensionnement de la fenêtre"""
+        if event and event.widget == self:
+            # Mettre à jour les tailles si nécessaire
+            self.update_ui_sizes()
+
+    def update_ui_sizes(self):
+        """Met à jour les tailles des éléments UI"""
+        sizes = self.get_responsive_sizes()
         
-        if not self._fullscreen_state:
-            self.state('zoomed')  # Maximiser si pas en plein écran
+        # Mettre à jour les fonts existantes
+        try:
+            self.title_label.config(font=sizes['title_font'])
+            self.status_label.config(font=sizes['status_font'])
+            self.turn_label.config(font=sizes['turn_font'])
+            
+            if hasattr(self, 'pseudo_label'):
+                self.pseudo_label.config(font=sizes['pseudo_label_font'])
+            if hasattr(self, 'pseudo_entry'):
+                self.pseudo_entry.config(font=sizes['pseudo_font'])
+            if hasattr(self, 'connect_button'):
+                self.connect_button.config(font=sizes['connect_font'])
+            
+            # Mettre à jour les boutons du plateau s'ils existent
+            if self.board_buttons:
+                for row in self.board_buttons:
+                    for button in row:
+                        button.config(
+                            font=sizes['button_font'],
+                            width=sizes['button_width'],
+                            height=sizes['button_height']
+                        )
+        except:
+            pass  # Ignorer les erreurs si les éléments n'existent pas encore
 
     def connect_to_server(self):
         pseudo = self.pseudo_entry.get().strip()
@@ -272,6 +383,8 @@ class MatchmakingClient(tk.Tk):
 
     def create_game_board(self):
         """Crée le plateau de jeu avec un design moderne"""
+        sizes = self.get_responsive_sizes()
+        
         # Détruire l'ancien plateau s'il existe
         if self.board_frame:
             self.board_frame.destroy()
@@ -280,7 +393,7 @@ class MatchmakingClient(tk.Tk):
         self.hide_game_controls()
         
         # Afficher le conteneur de jeu
-        self.game_container.pack(pady=20)
+        self.game_container.pack(pady=sizes['board_pady'])
         
         # Réinitialiser les variables de jeu
         self.board_buttons = []
@@ -293,28 +406,32 @@ class MatchmakingClient(tk.Tk):
             relief=tk.RAISED,
             bd=8
         )
-        self.board_frame.pack(pady=30)
+        self.board_frame.pack(pady=sizes['board_pady'])
         
         # Titre du plateau
         board_title = tk.Label(
             self.board_frame,
             text="🎯 PLATEAU DE JEU",
-            font=("Arial", 20, "bold"),
+            font=sizes['board_title_font'],
             fg="#00d4aa",
             bg="#16213e"
         )
-        board_title.grid(row=0, column=0, columnspan=3, pady=20)
+        board_title.pack(pady=(15, 10))
+        
+        # Frame spécifique pour la grille 3x3
+        grid_frame = tk.Frame(self.board_frame, bg="#16213e")
+        grid_frame.pack(pady=15)
         
         # Créer la grille 3x3 avec des boutons stylés
         for i in range(3):
             row = []
             for j in range(3):
                 button = tk.Button(
-                    self.board_frame,
+                    grid_frame,
                     text=" ",
-                    width=6,
-                    height=3,
-                    font=("Arial", 32, "bold"),
+                    width=sizes['button_width'],
+                    height=sizes['button_height'],
+                    font=sizes['button_font'],
                     command=lambda r=i, c=j: self.make_move(r, c),
                     bg="#2d3561",
                     fg="#ffffff",
@@ -323,7 +440,7 @@ class MatchmakingClient(tk.Tk):
                     cursor="hand2",
                     activebackground="#3d4571"
                 )
-                button.grid(row=i+1, column=j, padx=8, pady=8)
+                button.grid(row=i, column=j, padx=sizes['button_padx'], pady=sizes['button_pady'], sticky="nsew")
                 
                 # Effet hover pour les cases
                 button.bind("<Enter>", lambda e, b=button: self.on_button_hover(b, True))
@@ -332,8 +449,14 @@ class MatchmakingClient(tk.Tk):
                 row.append(button)
             self.board_buttons.append(row)
         
+        # Configuration pour que la grille s'étende uniformément
+        for i in range(3):
+            grid_frame.grid_rowconfigure(i, weight=1)
+            grid_frame.grid_columnconfigure(i, weight=1)
+        
         # Espacement en bas du plateau
-        tk.Label(self.board_frame, text="", bg="#16213e").grid(row=4, column=0, pady=10)
+        bottom_spacer = tk.Label(self.board_frame, text="", bg="#16213e")
+        bottom_spacer.pack(pady=15)
         
         self.game_started = True
         print(f"[DEBUG] Plateau de jeu créé pour le match {self.match_id}")
@@ -346,26 +469,37 @@ class MatchmakingClient(tk.Tk):
             else:
                 button.config(bg="#2d3561", relief=tk.RAISED)
 
-    def update_game_state(self, state):
-        """Met à jour l'interface selon l'état du jeu reçu du serveur"""
-        if not self.game_started:
-            return
+    def toggle_fullscreen(self, event=None):
+        """Bascule entre plein écran et fenêtré"""
+        current_state = self.attributes('-fullscreen') if hasattr(self, '_fullscreen_state') else False
+        if not hasattr(self, '_fullscreen_state'):
+            self._fullscreen_state = False
         
-        # Mettre à jour le plateau
-        board = state['board']
-        for i in range(3):
-            for j in range(3):
-                symbol = board[i * 3 + j]
-                button = self.board_buttons[i][j]
-                button['text'] = symbol if symbol != ' ' else ' '
-                
-                # Colorer les cases selon le joueur avec des couleurs modernes
-                if symbol == 'X':
-                    button.config(bg="#e74c3c", fg="#ffffff", font=("Arial", 32, "bold"))  # Rouge moderne
-                elif symbol == 'O':
-                    button.config(bg="#3498db", fg="#ffffff", font=("Arial", 32, "bold"))  # Bleu moderne
-                else:
-                    button.config(bg="#2d3561", fg="#ffffff", font=("Arial", 32, "bold"))
+        self._fullscreen_state = not self._fullscreen_state
+        self.attributes('-fullscreen', self._fullscreen_state)
+        
+        if not self._fullscreen_state:
+            self.state('zoomed')  # Maximiser si pas en plein écran
+        
+            # Forcer la mise à jour des tailles après changement de mode
+            self.after(100, self.update_ui_sizes)
+            
+        def update_game_state(self, state):
+            """Met à jour le plateau de jeu selon l'état reçu du serveur"""
+            # Mettre à jour le plateau
+            for i in range(3):
+                for j in range(3):
+                    symbol = state['board'][i][j]
+                    button = self.board_buttons[i][j]
+                    button.config(text=symbol)
+                    
+                    # Styliser selon le symbole
+                    if symbol == 'X':
+                        button.config(bg="#e74c3c", fg="#ffffff", font=("Arial", 32, "bold"))  # Rouge moderne
+                    elif symbol == 'O':
+                        button.config(bg="#3498db", fg="#ffffff", font=("Arial", 32, "bold"))  # Bleu moderne
+                    else:
+                        button.config(bg="#2d3561", fg="#ffffff", font=("Arial", 32, "bold"))
         
         # Mettre à jour le statut du tour
         self.is_my_turn = (state['current_turn'] == self.player_number and not state['is_finished'])
