@@ -50,6 +50,8 @@ def send_game_state(match):
     }
     
     message = json.dumps(state)
+    print(f"[DEBUG] Envoi état de jeu: {message}")
+    
     try:
         match['player1_conn'].sendall(message.encode() + b'\n')
     except:
@@ -276,6 +278,7 @@ def notify_players_match_found(match_id, match):
         match['player2_conn'].sendall(message2.encode() + b'\n')
         
         # Envoyer l'état initial du jeu
+        print(f"[DEBUG] Match {match_id} créé, état initial: {match}")
         time.sleep(0.5)  # Petit délai pour laisser le temps au client de se préparer
         send_game_state(match)
         
